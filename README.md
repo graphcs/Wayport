@@ -5,6 +5,11 @@ Internet sharing application using SOCKS5 proxy with WebSocket relay.
 ## Quick Start
 
 ```bash
+# Create virtual environment
+python3 -m venv .venv
+
+# Activate it
+source .venv/bin/activate
 # Install
 pip install -e .
 
