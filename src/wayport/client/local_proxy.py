@@ -311,6 +311,7 @@ class LocalProxy:
 
         self._server: asyncio.Server | None = None
         self._connections: dict[int, LocalProxyConnection] = {}
+        self._closed_streams: set[int] = set()  # Track recently closed streams
         self._next_stream_id = 1
         self._lock = asyncio.Lock()
 
@@ -334,6 +335,7 @@ class LocalProxy:
             for conn in list(self._connections.values()):
                 await conn.close()
             self._connections.clear()
+            self._closed_streams.clear()
 
     async def handle_frame(self, frame: Frame) -> None:
         """Handle a frame received from the exit node.
@@ -343,7 +345,9 @@ class LocalProxy:
         """
         conn = self._connections.get(frame.stream_id)
         if not conn:
-            logger.debug("Frame for unknown stream", stream_id=frame.stream_id)
+            # Only log if not a recently closed stream (avoids spurious warnings)
+            if frame.stream_id not in self._closed_streams:
+                logger.debug("Frame for unknown stream", stream_id=frame.stream_id)
             return
 
         if frame.frame_type == FrameType.OPEN:
@@ -423,3 +427,9 @@ class LocalProxy:
             stream_id: The closed stream ID
         """
         self._connections.pop(stream_id, None)
+        # Track as recently closed to avoid spurious warnings for in-flight frames
+        self._closed_streams.add(stream_id)
+        # Cleanup old entries (keep last 100)
+        if len(self._closed_streams) > 100:
+            oldest = min(self._closed_streams)
+            self._closed_streams.discard(oldest)

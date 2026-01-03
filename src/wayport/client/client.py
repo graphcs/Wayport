@@ -49,7 +49,9 @@ class WayportClient:
         self._tunnel: ClientTunnel | None = None
         self._proxy: LocalProxy | None = None
         self._send_queue: asyncio.Queue[Frame] = asyncio.Queue()
+        self._recv_queue: asyncio.Queue[Frame] = asyncio.Queue()
         self._send_task: asyncio.Task[None] | None = None
+        self._recv_task: asyncio.Task[None] | None = None
         self._connected = False
 
     @property
@@ -92,8 +94,9 @@ class WayportClient:
             on_error=self._handle_error,
         )
 
-        # Start send task
+        # Start send and receive tasks
         self._send_task = asyncio.create_task(self._send_loop())
+        self._recv_task = asyncio.create_task(self._recv_loop())
 
         # Start tunnel (with reconnect)
         try:
@@ -116,6 +119,13 @@ class WayportClient:
             self._send_task.cancel()
             try:
                 await self._send_task
+            except asyncio.CancelledError:
+                pass
+
+        if self._recv_task:
+            self._recv_task.cancel()
+            try:
+                await self._recv_task
             except asyncio.CancelledError:
                 pass
 
@@ -146,6 +156,18 @@ class WayportClient:
                 break
             except Exception as e:
                 logger.error("Error sending frame", error=str(e))
+
+    async def _recv_loop(self) -> None:
+        """Process received frames sequentially."""
+        while True:
+            try:
+                frame = await self._recv_queue.get()
+                if self._proxy:
+                    await self._proxy.handle_frame(frame)
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.error("Error processing frame", error=str(e))
 
     def _handle_connected(self, tunnel_id: str, peer_device_name: str) -> None:
         """Handle successful connection to exit node.
@@ -221,8 +243,10 @@ class WayportClient:
         Args:
             frame: The received frame
         """
-        if self._proxy:
-            asyncio.create_task(self._proxy.handle_frame(frame))
+        try:
+            self._recv_queue.put_nowait(frame)
+        except asyncio.QueueFull:
+            logger.warning("Receive queue full, dropping frame")
 
 
 async def run_client(code: str, settings: ClientSettings | None = None) -> None:

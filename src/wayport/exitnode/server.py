@@ -50,7 +50,9 @@ class ExitNodeServer:
         self._socks_handler: SocksHandler | None = None
         self._tunnel: ExitNodeTunnel | None = None
         self._send_queue: asyncio.Queue[Frame] = asyncio.Queue()
+        self._recv_queue: asyncio.Queue[Frame] = asyncio.Queue()
         self._send_task: asyncio.Task[None] | None = None
+        self._recv_task: asyncio.Task[None] | None = None
 
     @property
     def current_code(self) -> str | None:
@@ -86,8 +88,9 @@ class ExitNodeServer:
             on_data_received=self._handle_data_received,
         )
 
-        # Start send task
+        # Start send and receive tasks
         self._send_task = asyncio.create_task(self._send_loop())
+        self._recv_task = asyncio.create_task(self._recv_loop())
 
         # Start tunnel (this blocks until stopped)
         try:
@@ -95,6 +98,8 @@ class ExitNodeServer:
         finally:
             if self._send_task:
                 self._send_task.cancel()
+            if self._recv_task:
+                self._recv_task.cancel()
             if self._socks_handler:
                 await self._socks_handler.close_all()
 
@@ -125,6 +130,18 @@ class ExitNodeServer:
                 break
             except Exception as e:
                 logger.error("Error sending frame", error=str(e))
+
+    async def _recv_loop(self) -> None:
+        """Process received frames sequentially."""
+        while True:
+            try:
+                frame = await self._recv_queue.get()
+                if self._socks_handler:
+                    await self._socks_handler.handle_frame(frame)
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.error("Error processing frame", error=str(e))
 
     def _handle_code_received(self, code: str, expires_at: str) -> None:
         """Handle receiving the registration code.
@@ -179,8 +196,10 @@ class ExitNodeServer:
         Args:
             frame: The received frame
         """
-        if self._socks_handler:
-            asyncio.create_task(self._socks_handler.handle_frame(frame))
+        try:
+            self._recv_queue.put_nowait(frame)
+        except asyncio.QueueFull:
+            logger.warning("Receive queue full, dropping frame")
 
 
 async def run_exit_node(settings: ExitNodeSettings | None = None) -> None:
