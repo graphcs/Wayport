@@ -31,9 +31,8 @@ def main() -> None:
         help="Device name to display to clients",
     )
     server_parser.add_argument(
-        "--no-tui",
-        action="store_true",
-        help="Run without TUI (headless mode)",
+        "--code",
+        help="Preferred connection code (relay will use if available)",
     )
     server_parser.add_argument(
         "--log-level",
@@ -63,11 +62,6 @@ def main() -> None:
         type=int,
         default=1080,
         help="Local SOCKS5 proxy port (default: 1080)",
-    )
-    client_parser.add_argument(
-        "--no-tui",
-        action="store_true",
-        help="Run without TUI (headless mode)",
     )
     client_parser.add_argument(
         "--log-level",
@@ -116,6 +110,7 @@ def main() -> None:
 def run_server(args: argparse.Namespace) -> None:
     """Run the exit node server."""
     from wayport.common.config import ExitNodeSettings
+    from wayport.exitnode.server import run_exit_node
 
     settings = ExitNodeSettings(
         relay_url=args.relay_url,
@@ -128,19 +123,14 @@ def run_server(args: argparse.Namespace) -> None:
             log_level=args.log_level,
         )
 
-    if args.no_tui:
-        from wayport.exitnode.server import run_exit_node
-
-        asyncio.run(run_exit_node(settings))
-    else:
-        from wayport.exitnode.ui import run_exitnode_ui
-
-        run_exitnode_ui(settings)
+    preferred_code = args.code.upper() if args.code else None
+    asyncio.run(run_exit_node(settings, preferred_code=preferred_code))
 
 
 def run_client(args: argparse.Namespace) -> None:
     """Run the client."""
     from wayport.common.config import ClientSettings
+    from wayport.client.client import run_client as run_client_impl
 
     settings = ClientSettings(
         relay_url=args.relay_url,
@@ -149,20 +139,14 @@ def run_client(args: argparse.Namespace) -> None:
     )
 
     code = args.code
-    if not code and args.no_tui:
+    if not code:
         code = input("Enter connection code: ").strip().upper()
 
-    if args.no_tui:
-        if not code:
-            print("Error: Connection code is required in headless mode")
-            sys.exit(1)
-        from wayport.client.client import run_client as run_client_headless
+    if not code:
+        print("Error: Connection code is required")
+        sys.exit(1)
 
-        asyncio.run(run_client_headless(code, settings))
-    else:
-        from wayport.client.ui import run_client_ui
-
-        run_client_ui(settings, code=code)
+    asyncio.run(run_client_impl(code, settings))
 
 
 def run_relay(args: argparse.Namespace) -> None:

@@ -179,10 +179,13 @@ class RegisterMessage(Message):
 
     type: str = field(default=MessageType.REGISTER, init=False)
     device_name: str = ""
+    preferred_code: str | None = None  # Preferred code to use if available
 
     def to_dict(self) -> dict[str, Any]:
         d = super().to_dict()
         d["device_name"] = self.device_name
+        if self.preferred_code:
+            d["preferred_code"] = self.preferred_code
         return d
 
 

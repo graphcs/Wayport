@@ -224,8 +224,7 @@ class ClientTunnel:
                 logger.info("Disconnected from exit node", reason=reason)
                 if self.on_disconnected:
                     self.on_disconnected(reason)
-                # Stop if peer disconnected
-                self._running = False
+                # Continue running to allow reconnection with same code
 
             elif msg_type == MessageType.ERROR:
                 error_code = msg.get("error_code", "")
@@ -233,8 +232,9 @@ class ClientTunnel:
                 logger.error("Relay error", code=error_code, message=error_message)
                 if self.on_error:
                     self.on_error(error_code, error_message)
-                # Stop on error
-                self._running = False
+                # Only stop on fatal errors (invalid code)
+                if error_code in ("invalid_code", "code_expired"):
+                    self._running = False
 
             elif msg_type == MessageType.PONG:
                 pass  # Heartbeat response

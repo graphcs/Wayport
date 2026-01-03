@@ -87,6 +87,7 @@ class SessionManager:
         session_id: str,
         device_name: str,
         websocket: web.WebSocketResponse,
+        preferred_code: str | None = None,
     ) -> ExitNodeSession:
         """Create a new exit node session with a unique code.
 
@@ -94,12 +95,22 @@ class SessionManager:
             session_id: Unique identifier for the session
             device_name: Name of the device
             websocket: WebSocket connection
+            preferred_code: Preferred code to use if available
 
         Returns:
             The created ExitNodeSession
         """
-        # Generate a unique code
-        code = self._generate_unique_code()
+        # Try to use preferred code if available and not in use
+        code = None
+        if preferred_code:
+            preferred_code = preferred_code.upper()
+            if preferred_code not in self._codes:
+                code = preferred_code
+
+        # Generate a unique code if preferred not available
+        if code is None:
+            code = self._generate_unique_code()
+
         expires_at = datetime.now(timezone.utc) + timedelta(hours=self.code_expiry_hours)
 
         session = ExitNodeSession(

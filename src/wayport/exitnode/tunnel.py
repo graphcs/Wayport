@@ -30,6 +30,7 @@ class ExitNodeTunnel:
     def __init__(
         self,
         settings: "ExitNodeSettings",
+        preferred_code: str | None = None,
         on_code_received: Callable[[str, str], None] | None = None,
         on_client_connected: Callable[[str], None] | None = None,
         on_client_disconnected: Callable[[str], None] | None = None,
@@ -40,6 +41,7 @@ class ExitNodeTunnel:
 
         Args:
             settings: Exit node settings
+            preferred_code: Preferred connection code to request
             on_code_received: Callback when registration code is received (code, expires_at)
             on_client_connected: Callback when a client connects (tunnel_id)
             on_client_disconnected: Callback when a client disconnects (reason)
@@ -47,6 +49,7 @@ class ExitNodeTunnel:
             on_data_received: Callback when binary data is received from client
         """
         self.settings = settings
+        self.preferred_code = preferred_code
         self.on_code_received = on_code_received
         self.on_client_connected = on_client_connected
         self.on_client_disconnected = on_client_disconnected
@@ -59,6 +62,7 @@ class ExitNodeTunnel:
         self._current_tunnel_id: str | None = None
         self._heartbeat_task: asyncio.Task[None] | None = None
         self._reconnect_delay = settings.reconnect_delay_seconds
+        self._last_code: str | None = None  # Remember last code for reconnection
 
     @property
     def is_connected(self) -> bool:
@@ -129,8 +133,14 @@ class ExitNodeTunnel:
             self._reconnect_delay = self.settings.reconnect_delay_seconds
             self._notify_status("connected")
 
+            # Use preferred code or last code for reconnection
+            code_to_request = self.preferred_code or self._last_code
+
             # Send registration message
-            register_msg = RegisterMessage(device_name=self.settings.device_name)
+            register_msg = RegisterMessage(
+                device_name=self.settings.device_name,
+                preferred_code=code_to_request,
+            )
             await ws.send_str(register_msg.to_json())
 
             # Start heartbeat
@@ -177,6 +187,7 @@ class ExitNodeTunnel:
             if msg_type == MessageType.REGISTERED:
                 code = msg.get("code", "")
                 expires_at = msg.get("expires_at", "")
+                self._last_code = code  # Remember for reconnection
                 logger.info("Registered with relay", code=code)
                 if self.on_code_received:
                     self.on_code_received(code, expires_at)

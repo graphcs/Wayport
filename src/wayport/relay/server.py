@@ -167,10 +167,12 @@ class RelayServer:
 
             if msg_type == MessageType.REGISTER:
                 device_name = msg.get("device_name", "Unknown")
+                preferred_code = msg.get("preferred_code")
                 session = self.session_manager.create_exitnode_session(
                     session_id=session_id,
                     device_name=device_name,
                     websocket=ws,
+                    preferred_code=preferred_code,
                 )
 
                 # Send registration response
@@ -185,6 +187,7 @@ class RelayServer:
                     session_id=session_id,
                     code=session.code,
                     device_name=device_name,
+                    preferred_code=preferred_code,
                 )
 
             elif msg_type == MessageType.PING:
