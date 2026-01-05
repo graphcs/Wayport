@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import getpass
 import sys
 
 
@@ -35,6 +36,11 @@ def main() -> None:
         help="Preferred connection code (relay will use if available)",
     )
     server_parser.add_argument(
+        "--secret",
+        action="store_true",
+        help="Enable encryption (will prompt for secret)",
+    )
+    server_parser.add_argument(
         "--log-level",
         choices=["DEBUG", "INFO", "WARNING", "ERROR"],
         default="INFO",
@@ -62,6 +68,11 @@ def main() -> None:
         type=int,
         default=1080,
         help="Local SOCKS5 proxy port (default: 1080)",
+    )
+    client_parser.add_argument(
+        "--secret",
+        action="store_true",
+        help="Enable encryption (will prompt for secret)",
     )
     client_parser.add_argument(
         "--log-level",
@@ -112,16 +123,25 @@ def run_server(args: argparse.Namespace) -> None:
     from wayport.common.config import ExitNodeSettings
     from wayport.exitnode.server import run_exit_node
 
-    settings = ExitNodeSettings(
-        relay_url=args.relay_url,
-        log_level=args.log_level,
-    )
+    # Prompt for secret if encryption enabled
+    secret = None
+    if args.secret:
+        secret = getpass.getpass("Enter encryption secret: ")
+        if not secret:
+            print("Error: Secret cannot be empty")
+            sys.exit(1)
+
+    # Build settings dict, only including non-None values
+    settings_kwargs: dict = {
+        "relay_url": args.relay_url,
+        "log_level": args.log_level,
+    }
     if args.device_name:
-        settings = ExitNodeSettings(
-            relay_url=args.relay_url,
-            device_name=args.device_name,
-            log_level=args.log_level,
-        )
+        settings_kwargs["device_name"] = args.device_name
+    if secret:
+        settings_kwargs["secret"] = secret
+
+    settings = ExitNodeSettings(**settings_kwargs)
 
     preferred_code = args.code.upper() if args.code else None
     asyncio.run(run_exit_node(settings, preferred_code=preferred_code))
@@ -132,11 +152,24 @@ def run_client(args: argparse.Namespace) -> None:
     from wayport.common.config import ClientSettings
     from wayport.client.client import run_client as run_client_impl
 
-    settings = ClientSettings(
-        relay_url=args.relay_url,
-        proxy_port=args.proxy_port,
-        log_level=args.log_level,
-    )
+    # Prompt for secret if encryption enabled
+    secret = None
+    if args.secret:
+        secret = getpass.getpass("Enter encryption secret: ")
+        if not secret:
+            print("Error: Secret cannot be empty")
+            sys.exit(1)
+
+    # Build settings dict, only including non-None values
+    settings_kwargs: dict = {
+        "relay_url": args.relay_url,
+        "proxy_port": args.proxy_port,
+        "log_level": args.log_level,
+    }
+    if secret:
+        settings_kwargs["secret"] = secret
+
+    settings = ClientSettings(**settings_kwargs)
 
     code = args.code
     if not code:

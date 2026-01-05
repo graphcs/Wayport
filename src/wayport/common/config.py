@@ -53,6 +53,9 @@ class ExitNodeSettings(BaseSettings):
     # Heartbeat settings
     heartbeat_interval_seconds: int = 30
 
+    # Encryption
+    secret: str | None = None  # Shared secret for end-to-end encryption
+
     # Logging
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"
 
@@ -76,6 +79,9 @@ class ClientSettings(BaseSettings):
 
     # Heartbeat settings
     heartbeat_interval_seconds: int = 30
+
+    # Encryption
+    secret: str | None = None  # Shared secret for end-to-end encryption
 
     # Logging
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"

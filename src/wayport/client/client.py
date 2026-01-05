@@ -8,6 +8,7 @@ import time
 from typing import TYPE_CHECKING, Callable
 
 from wayport.common.config import ClientSettings
+from wayport.common.crypto import decrypt, derive_key, encrypt
 from wayport.common.logging import get_logger, setup_logging
 from wayport.common.protocol import Frame
 from wayport.client.local_proxy import LocalProxy
@@ -98,6 +99,11 @@ class WayportClient:
         self._connected = False
         self._health = ConnectionHealth()
 
+        # Encryption
+        self._encryption_key: bytes | None = None
+        if self.settings.secret:
+            self._encryption_key = derive_key(self.settings.secret)
+
     @property
     def is_connected(self) -> bool:
         """Check if connected to an exit node."""
@@ -123,6 +129,8 @@ class WayportClient:
         print(f"Relay: {self.settings.relay_url}")
         print(f"Code: {code.upper()}")
         print(f"Local proxy: {self.settings.proxy_host}:{self.settings.proxy_port}")
+        if self._encryption_key:
+            print("Encryption: ENABLED")
         print("=" * 30)
         print("Connecting...")
 
@@ -209,6 +217,14 @@ class WayportClient:
         while True:
             try:
                 frame = await self._send_queue.get()
+
+                # Encrypt if enabled
+                if self._encryption_key:
+                    frame = Frame(
+                        frame.frame_type,
+                        frame.stream_id,
+                        encrypt(frame.payload, self._encryption_key),
+                    )
 
                 if self._tunnel and self._tunnel.is_connected:
                     # First, send any pending frames from disconnection period
@@ -359,6 +375,18 @@ class WayportClient:
             frame: The received frame
         """
         try:
+            # Decrypt if enabled
+            if self._encryption_key:
+                try:
+                    frame = Frame(
+                        frame.frame_type,
+                        frame.stream_id,
+                        decrypt(frame.payload, self._encryption_key),
+                    )
+                except Exception as e:
+                    logger.error("Decryption failed", error=str(e))
+                    return
+
             self._recv_queue.put_nowait(frame)
         except asyncio.QueueFull:
             logger.warning("Receive queue full, dropping frame")

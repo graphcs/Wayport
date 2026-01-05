@@ -201,6 +201,7 @@ Options:
   --relay-url URL      Relay server URL (default: ws://localhost:8080)
   --device-name NAME   Name shown to clients
   --code CODE          Preferred connection code
+  --secret             Enable encryption (prompts for password)
   --log-level LEVEL    DEBUG, INFO, WARNING, ERROR (default: INFO)
 ```
 
@@ -212,8 +213,35 @@ Options:
   CODE                 Connection code from exit node
   --relay-url URL      Relay server URL (default: ws://localhost:8080)
   --proxy-port PORT    Local SOCKS5 proxy port (default: 1080)
+  --secret             Enable encryption (prompts for password)
   --log-level LEVEL    DEBUG, INFO, WARNING, ERROR (default: INFO)
 ```
+
+---
+
+## Encryption
+
+Wayport supports optional end-to-end encryption. When enabled, all traffic between the client and exit node is encrypted using AES-256-GCM. The relay server cannot read the encrypted data.
+
+### Enable Encryption
+
+Add `--secret` to both the exit node and client commands:
+
+**Exit Node:**
+```bash
+wayport server --relay-url ws://RELAY_IP:8080 --secret
+Enter encryption secret: ********
+```
+
+**Client:**
+```bash
+wayport client ABC123 --relay-url ws://RELAY_IP:8080 --secret
+Enter encryption secret: ********
+```
+
+The secret is entered interactively (hidden input) so it doesn't appear in shell history.
+
+**Important:** Both sides must use the same secret. If the secrets don't match, you'll see decryption errors and the connection won't work.
 
 ---
 
