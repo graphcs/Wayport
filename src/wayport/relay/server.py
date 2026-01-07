@@ -3,10 +3,25 @@
 from __future__ import annotations
 
 import asyncio
+import socket
 from datetime import datetime, timezone
 from uuid import uuid4
 
 from aiohttp import WSMsgType, web
+
+
+def get_local_ip() -> str:
+    """Get the local IP address of this machine."""
+    try:
+        # Connect to an external address to determine local IP
+        # This doesn't actually send any data
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.connect(("8.8.8.8", 80))
+        ip = s.getsockname()[0]
+        s.close()
+        return ip
+    except Exception:
+        return "127.0.0.1"
 
 from wayport.common.config import RelaySettings
 from wayport.common.logging import get_logger, setup_logging
@@ -56,10 +71,20 @@ class RelayServer:
         site = web.TCPSite(runner, self.settings.host, self.settings.port)
         await site.start()
 
+        local_ip = get_local_ip()
+
+        print(f"\n=== Wayport Relay Server ===")
+        print(f"Listening on: {self.settings.host}:{self.settings.port}")
+        print(f"Local IP: {local_ip}")
+        print(f"\nConnect using:")
+        print(f"  ws://{local_ip}:{self.settings.port}")
+        print("=" * 30 + "\n")
+
         logger.info(
             "Relay server started",
             host=self.settings.host,
             port=self.settings.port,
+            local_ip=local_ip,
         )
 
         # Keep running
