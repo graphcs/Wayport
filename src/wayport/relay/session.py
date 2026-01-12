@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import secrets
 import string
 from dataclasses import dataclass, field
@@ -27,6 +28,33 @@ def generate_connection_code(length: int = 6) -> str:
         A random alphanumeric code (e.g., "ABC123")
     """
     return "".join(secrets.choice(CODE_ALPHABET) for _ in range(length))
+
+
+def generate_deterministic_code(seed: str, length: int = 6) -> str:
+    """Generate a deterministic connection code from a seed string.
+
+    Uses SHA-256 hash of the seed, then converts to CODE_ALPHABET.
+    The same seed will always produce the same code.
+
+    Args:
+        seed: Seed string (e.g., device name)
+        length: Number of characters in the code
+
+    Returns:
+        A deterministic alphanumeric code
+    """
+    # Hash the seed
+    hash_bytes = hashlib.sha256(seed.encode()).digest()
+
+    # Convert hash bytes to code characters
+    code_chars = []
+    alphabet_len = len(CODE_ALPHABET)
+    for i in range(length):
+        # Use each byte to select a character from the alphabet
+        index = hash_bytes[i] % alphabet_len
+        code_chars.append(CODE_ALPHABET[index])
+
+    return "".join(code_chars)
 
 
 @dataclass

@@ -13,6 +13,7 @@ from wayport.common.logging import get_logger, setup_logging
 from wayport.common.protocol import Frame
 from wayport.exitnode.socks import SocksHandler
 from wayport.exitnode.tunnel import ExitNodeTunnel
+from wayport.relay.session import generate_deterministic_code
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -88,7 +89,13 @@ class ExitNodeServer:
             on_connection_status: Callback for connection status updates
         """
         self.settings = settings or ExitNodeSettings()
-        self.preferred_code = preferred_code
+
+        # If no preferred code is given, generate deterministic code from device name
+        # This ensures the same machine always gets the same code
+        if preferred_code:
+            self.preferred_code = preferred_code
+        else:
+            self.preferred_code = generate_deterministic_code(self.settings.device_name)
 
         # External callbacks
         self._on_code_received = on_code_received
@@ -135,8 +142,7 @@ class ExitNodeServer:
         print(f"\n=== Wayport Exit Node ===")
         print(f"Device: {self.settings.device_name}")
         print(f"Relay: {self.settings.relay_url}")
-        if self.preferred_code:
-            print(f"Preferred code: {self.preferred_code}")
+        print(f"Code: {self.preferred_code} (deterministic from device name)")
         if self._encryption_key:
             print("Encryption: ENABLED")
         print("=" * 30)
@@ -313,10 +319,48 @@ class ExitNodeServer:
             self._health.current_code = None
             print(f"\n[!] Disconnected from relay, reconnecting...")
         elif status == "connecting":
+            # Clear stale queues when starting a new connection attempt
+            self._clear_stale_queues()
             print(f"\n[~] Connecting to relay...")
 
         if self._on_connection_status:
             self._on_connection_status(status)
+
+    def _clear_stale_queues(self) -> None:
+        """Clear stale data from queues on reconnect.
+
+        This is called when starting a new connection attempt to ensure
+        we don't send stale data from previous connections.
+        """
+        # Clear pending queue (frames from disconnection period)
+        stale_pending = len(self._pending_queue)
+        self._pending_queue.clear()
+
+        # Drain the send queue
+        stale_send = 0
+        while not self._send_queue.empty():
+            try:
+                self._send_queue.get_nowait()
+                stale_send += 1
+            except asyncio.QueueEmpty:
+                break
+
+        # Drain the receive queue
+        stale_recv = 0
+        while not self._recv_queue.empty():
+            try:
+                self._recv_queue.get_nowait()
+                stale_recv += 1
+            except asyncio.QueueEmpty:
+                break
+
+        if stale_pending > 0 or stale_send > 0 or stale_recv > 0:
+            logger.info(
+                "Cleared stale queues on reconnect",
+                pending=stale_pending,
+                send=stale_send,
+                recv=stale_recv,
+            )
 
     def _handle_data_received(self, frame: Frame) -> None:
         """Handle binary data from the client.

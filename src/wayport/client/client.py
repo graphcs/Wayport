@@ -341,6 +341,9 @@ class WayportClient:
             status: Status string
         """
         if status == "connecting":
+            # Clear stale queues when starting a new connection attempt
+            # Old pending frames are for streams that may no longer exist
+            self._clear_stale_queues()
             print(f"\n[~] Connecting to relay...")
         elif status == "connected_to_relay":
             self._health.relay_connected = True
@@ -355,6 +358,42 @@ class WayportClient:
 
         if self._on_connection_status:
             self._on_connection_status(status)
+
+    def _clear_stale_queues(self) -> None:
+        """Clear stale data from queues on reconnect.
+
+        This is called when starting a new connection attempt to ensure
+        we don't send stale data from previous connections.
+        """
+        # Clear pending queue (frames from disconnection period)
+        stale_pending = len(self._pending_queue)
+        self._pending_queue.clear()
+
+        # Drain the send queue
+        stale_send = 0
+        while not self._send_queue.empty():
+            try:
+                self._send_queue.get_nowait()
+                stale_send += 1
+            except asyncio.QueueEmpty:
+                break
+
+        # Drain the receive queue
+        stale_recv = 0
+        while not self._recv_queue.empty():
+            try:
+                self._recv_queue.get_nowait()
+                stale_recv += 1
+            except asyncio.QueueEmpty:
+                break
+
+        if stale_pending > 0 or stale_send > 0 or stale_recv > 0:
+            logger.info(
+                "Cleared stale queues on reconnect",
+                pending=stale_pending,
+                send=stale_send,
+                recv=stale_recv,
+            )
 
     def _handle_error(self, error_code: str, error_message: str) -> None:
         """Handle an error.

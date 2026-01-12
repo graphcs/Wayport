@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import random
 from typing import TYPE_CHECKING, Callable
 
 import aiohttp
@@ -116,8 +117,11 @@ class ClientTunnel:
 
             if self._running:
                 self._notify_status("disconnected")
-                logger.info("Reconnecting", delay=self._reconnect_delay)
-                await asyncio.sleep(self._reconnect_delay)
+                # Add jitter to prevent thundering herd (±25% randomization)
+                jitter = self._reconnect_delay * random.uniform(-0.25, 0.25)
+                delay_with_jitter = max(1, self._reconnect_delay + jitter)
+                logger.info("Reconnecting", delay=delay_with_jitter)
+                await asyncio.sleep(delay_with_jitter)
                 self._reconnect_delay = min(
                     self._reconnect_delay * self.settings.reconnect_backoff_multiplier,
                     self.settings.reconnect_max_delay_seconds,
@@ -232,9 +236,8 @@ class ClientTunnel:
                 logger.error("Relay error", code=error_code, message=error_message)
                 if self.on_error:
                     self.on_error(error_code, error_message)
-                # Only stop on fatal errors (invalid code)
-                if error_code in ("invalid_code", "code_expired"):
-                    self._running = False
+                # Never give up - always retry, even on invalid_code or code_expired
+                # The exit node may come back online with the same code
 
             elif msg_type == MessageType.PONG:
                 pass  # Heartbeat response

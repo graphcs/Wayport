@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import random
 from typing import TYPE_CHECKING, Callable
 
 import aiohttp
@@ -89,11 +90,14 @@ class ExitNodeTunnel:
 
             if self._running:
                 self._notify_status("disconnected")
+                # Add jitter to prevent thundering herd (±25% randomization)
+                jitter = self._reconnect_delay * random.uniform(-0.25, 0.25)
+                delay_with_jitter = max(1, self._reconnect_delay + jitter)
                 logger.info(
                     "Reconnecting",
-                    delay=self._reconnect_delay,
+                    delay=delay_with_jitter,
                 )
-                await asyncio.sleep(self._reconnect_delay)
+                await asyncio.sleep(delay_with_jitter)
                 self._reconnect_delay = min(
                     self._reconnect_delay * self.settings.reconnect_backoff_multiplier,
                     self.settings.reconnect_max_delay_seconds,
