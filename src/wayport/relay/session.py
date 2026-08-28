@@ -6,7 +6,7 @@ import hashlib
 import secrets
 import string
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -65,7 +65,7 @@ class ExitNodeSession:
     device_name: str
     code: str
     websocket: web.WebSocketResponse
-    created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     expires_at: datetime | None = None
     connected_client_id: str | None = None
     tunnel_id: str | None = None
@@ -74,7 +74,7 @@ class ExitNodeSession:
         """Check if the session has expired."""
         if self.expires_at is None:
             return False
-        return datetime.now(timezone.utc) > self.expires_at
+        return datetime.now(UTC) > self.expires_at
 
     def is_available(self) -> bool:
         """Check if the exit node is available for new connections."""
@@ -87,7 +87,7 @@ class ClientSession:
 
     session_id: str
     websocket: web.WebSocketResponse
-    created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     connected_exitnode_id: str | None = None
     tunnel_id: str | None = None
 
@@ -139,7 +139,7 @@ class SessionManager:
         if code is None:
             code = self._generate_unique_code()
 
-        expires_at = datetime.now(timezone.utc) + timedelta(hours=self.code_expiry_hours)
+        expires_at = datetime.now(UTC) + timedelta(hours=self.code_expiry_hours)
 
         session = ExitNodeSession(
             session_id=session_id,
@@ -303,9 +303,7 @@ class SessionManager:
             Number of sessions removed
         """
         expired = [
-            session_id
-            for session_id, session in self._exitnodes.items()
-            if session.is_expired()
+            session_id for session_id, session in self._exitnodes.items() if session.is_expired()
         ]
         for session_id in expired:
             self.remove_exitnode_session(session_id)

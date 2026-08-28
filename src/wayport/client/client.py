@@ -3,16 +3,18 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import sys
 import time
-from typing import TYPE_CHECKING, Callable
+from collections.abc import Callable
+from typing import TYPE_CHECKING
 
+from wayport.client.local_proxy import LocalProxy
+from wayport.client.tunnel import ClientTunnel
 from wayport.common.config import ClientSettings
 from wayport.common.crypto import decrypt, derive_key, encrypt
 from wayport.common.logging import get_logger, setup_logging
 from wayport.common.protocol import Frame
-from wayport.client.local_proxy import LocalProxy
-from wayport.client.tunnel import ClientTunnel
 
 if TYPE_CHECKING:
     pass
@@ -125,7 +127,7 @@ class WayportClient:
         """
         setup_logging(level=self.settings.log_level)
 
-        print(f"\n=== Wayport Client ===")
+        print("\n=== Wayport Client ===")
         print(f"Relay: {self.settings.relay_url}")
         print(f"Code: {code.upper()}")
         print(f"Local proxy: {self.settings.proxy_host}:{self.settings.proxy_port}")
@@ -177,24 +179,18 @@ class WayportClient:
         """Clean up resources."""
         if self._send_task:
             self._send_task.cancel()
-            try:
+            with contextlib.suppress(asyncio.CancelledError):
                 await self._send_task
-            except asyncio.CancelledError:
-                pass
 
         if self._recv_task:
             self._recv_task.cancel()
-            try:
+            with contextlib.suppress(asyncio.CancelledError):
                 await self._recv_task
-            except asyncio.CancelledError:
-                pass
 
         if self._status_task:
             self._status_task.cancel()
-            try:
+            with contextlib.suppress(asyncio.CancelledError):
                 await self._status_task
-            except asyncio.CancelledError:
-                pass
 
         if self._proxy:
             await self._proxy.stop()
@@ -301,7 +297,9 @@ class WayportClient:
 
         print(f"\n\n[+] Connected to: {peer_device_name}")
         print(f"[+] Tunnel ID: {tunnel_id[:8]}...")
-        print(f"\n*** SOCKS5 proxy available at {self.settings.proxy_host}:{self.settings.proxy_port} ***")
+        print(
+            f"\n*** SOCKS5 proxy available at {self.settings.proxy_host}:{self.settings.proxy_port} ***"
+        )
         print("Configure your browser to use this proxy.\n")
 
         logger.info(
@@ -344,17 +342,17 @@ class WayportClient:
             # Clear stale queues when starting a new connection attempt
             # Old pending frames are for streams that may no longer exist
             self._clear_stale_queues()
-            print(f"\n[~] Connecting to relay...")
+            print("\n[~] Connecting to relay...")
         elif status == "connected_to_relay":
             self._health.relay_connected = True
             self._health.reconnect_count += 1
-            print(f"\n[+] Connected to relay, waiting for tunnel...")
+            print("\n[+] Connected to relay, waiting for tunnel...")
         elif status == "tunnel_established":
             self._health.tunnel_connected = True
         elif status == "disconnected":
             self._health.relay_connected = False
             self._health.tunnel_connected = False
-            print(f"\n[!] Connection lost, reconnecting...")
+            print("\n[!] Connection lost, reconnecting...")
 
         if self._on_connection_status:
             self._on_connection_status(status)

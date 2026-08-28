@@ -6,8 +6,10 @@ Listens on localhost and forwards requests through the tunnel to the exit node.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import struct
-from typing import TYPE_CHECKING, Callable
+from collections.abc import Callable
+from typing import TYPE_CHECKING
 
 from wayport.common.logging import get_logger
 from wayport.common.protocol import (
@@ -122,15 +124,11 @@ class LocalProxyConnection:
         """Close the connection."""
         if self._read_task:
             self._read_task.cancel()
-            try:
+            with contextlib.suppress(asyncio.CancelledError):
                 await self._read_task
-            except asyncio.CancelledError:
-                pass
         self.writer.close()
-        try:
+        with contextlib.suppress(Exception):
             await self.writer.wait_closed()
-        except Exception:
-            pass
         self.on_close(self.stream_id)
 
     async def _do_handshake(self) -> bool:
@@ -183,6 +181,7 @@ class LocalProxyConnection:
             if len(addr_data) < 4:
                 return False
             import socket
+
             self._dest_addr = socket.inet_ntoa(addr_data)
         elif atyp == Socks5AddressType.DOMAIN:
             length_data = await self.reader.read(1)
@@ -198,6 +197,7 @@ class LocalProxyConnection:
             if len(addr_data) < 16:
                 return False
             import socket
+
             self._dest_addr = socket.inet_ntop(socket.AF_INET6, addr_data)
         else:
             await self._send_connect_response(Socks5Reply.ADDRESS_TYPE_NOT_SUPPORTED)
@@ -225,14 +225,20 @@ class LocalProxyConnection:
         """
         # Response: VER REP RSV ATYP BND.ADDR BND.PORT
         # We use 0.0.0.0:0 as bound address since we're proxying
-        response = bytes([
-            0x05,  # Version
-            reply,  # Reply
-            0x00,  # Reserved
-            Socks5AddressType.IPV4,  # Address type
-            0, 0, 0, 0,  # Bound address (0.0.0.0)
-            0, 0,  # Bound port (0)
-        ])
+        response = bytes(
+            [
+                0x05,  # Version
+                reply,  # Reply
+                0x00,  # Reserved
+                Socks5AddressType.IPV4,  # Address type
+                0,
+                0,
+                0,
+                0,  # Bound address (0.0.0.0)
+                0,
+                0,  # Bound port (0)
+            ]
+        )
         self.writer.write(response)
         await self.writer.drain()
 

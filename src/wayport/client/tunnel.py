@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import random
-from typing import TYPE_CHECKING, Callable
+from collections.abc import Callable
+from typing import TYPE_CHECKING
 
 import aiohttp
 from aiohttp import WSMsgType
@@ -29,7 +31,7 @@ class ClientTunnel:
 
     def __init__(
         self,
-        settings: "ClientSettings",
+        settings: ClientSettings,
         on_connected: Callable[[str, str], None] | None = None,
         on_disconnected: Callable[[str], None] | None = None,
         on_connection_status: Callable[[str], None] | None = None,
@@ -176,10 +178,8 @@ class ClientTunnel:
             finally:
                 if self._heartbeat_task:
                     self._heartbeat_task.cancel()
-                    try:
+                    with contextlib.suppress(asyncio.CancelledError):
                         await self._heartbeat_task
-                    except asyncio.CancelledError:
-                        pass
                 self._ws = None
                 self._tunnel_id = None
                 self._peer_device_name = None
