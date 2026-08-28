@@ -17,7 +17,7 @@ import os
 
 # The hosted relay. Both machines reach this by default, so neither side needs
 # to pass --relay-url. Override with WAYPORT_RELAY_URL when testing locally.
-DEFAULT_RELAY_URL = "wss://wayport-relay.up.railway.app"
+DEFAULT_RELAY_URL = "wss://relay-production-587a.up.railway.app"
 
 RELAY_URL_ENV_VAR = "WAYPORT_RELAY_URL"
 RELAY_TOKEN_ENV_VAR = "WAYPORT_RELAY_TOKEN"
