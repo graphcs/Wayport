@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING
 import aiohttp
 from aiohttp import WSMsgType
 
+from wayport.common.defaults import WS_HEARTBEAT_SECONDS
 from wayport.common.logging import get_logger
 from wayport.common.protocol import (
     Frame,
@@ -76,10 +77,15 @@ class ExitNodeTunnel:
         """Get the current tunnel ID if a client is connected."""
         return self._current_tunnel_id
 
+    def _auth_headers(self) -> dict[str, str]:
+        """Bearer token header for the relay, when one is configured."""
+        token = self.settings.relay_token
+        return {"Authorization": f"Bearer {token}"} if token else {}
+
     async def start(self) -> None:
         """Start the tunnel connection with auto-reconnect."""
         self._running = True
-        self._session = aiohttp.ClientSession()
+        self._session = aiohttp.ClientSession(trust_env=False)
 
         while self._running:
             try:
@@ -133,7 +139,11 @@ class ExitNodeTunnel:
         logger.info("Connecting to relay", url=url)
         self._notify_status("connecting")
 
-        async with self._session.ws_connect(url) as ws:
+        async with self._session.ws_connect(
+            url,
+            headers=self._auth_headers(),
+            heartbeat=WS_HEARTBEAT_SECONDS,
+        ) as ws:
             self._ws = ws
             self._reconnect_delay = self.settings.reconnect_delay_seconds
             self._notify_status("connected")
