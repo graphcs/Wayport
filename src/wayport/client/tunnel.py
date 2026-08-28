@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING
 import aiohttp
 from aiohttp import WSMsgType
 
+from wayport.common.defaults import WS_HEARTBEAT_SECONDS
 from wayport.common.logging import get_logger
 from wayport.common.protocol import (
     ConnectMessage,
@@ -79,6 +80,11 @@ class ClientTunnel:
         """Get the connected peer's device name."""
         return self._peer_device_name
 
+    def _auth_headers(self) -> dict[str, str]:
+        """Bearer token header for the relay, when one is configured."""
+        token = self.settings.relay_token
+        return {"Authorization": f"Bearer {token}"} if token else {}
+
     async def connect(self, code: str) -> bool:
         """Connect to an exit node using a connection code.
 
@@ -90,7 +96,7 @@ class ClientTunnel:
         """
         self._code = code.upper()
         self._running = True
-        self._session = aiohttp.ClientSession()
+        self._session = aiohttp.ClientSession(trust_env=False)
 
         try:
             await self._connect_and_handle()
@@ -107,7 +113,7 @@ class ClientTunnel:
         """
         self._code = code.upper()
         self._running = True
-        self._session = aiohttp.ClientSession()
+        self._session = aiohttp.ClientSession(trust_env=False)
 
         while self._running:
             try:
@@ -161,7 +167,11 @@ class ClientTunnel:
         logger.info("Connecting to relay", url=url)
         self._notify_status("connecting")
 
-        async with self._session.ws_connect(url) as ws:
+        async with self._session.ws_connect(
+            url,
+            headers=self._auth_headers(),
+            heartbeat=WS_HEARTBEAT_SECONDS,
+        ) as ws:
             self._ws = ws
             self._reconnect_delay = self.settings.reconnect_delay_seconds
             self._notify_status("connected_to_relay")

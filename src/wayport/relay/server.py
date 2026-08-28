@@ -3,12 +3,17 @@
 from __future__ import annotations
 
 import asyncio
+import os
+import secrets
 import socket
+import time
+from collections import defaultdict, deque
 from uuid import uuid4
 
 from aiohttp import WSMsgType, web
 
 from wayport.common.config import RelaySettings
+from wayport.common.defaults import WS_HEARTBEAT_SECONDS
 from wayport.common.logging import get_logger, setup_logging
 from wayport.common.protocol import (
     Message,
@@ -20,6 +25,10 @@ from wayport.relay.broker import ConnectionBroker
 from wayport.relay.session import ClientSession, SessionManager
 
 logger = get_logger(__name__)
+
+# Cap on how fast one IP may attempt connection codes.
+CONNECT_RATE_MAX_ATTEMPTS = 20
+CONNECT_RATE_WINDOW_SECONDS = 60.0
 
 
 def get_local_ip() -> str:
@@ -52,15 +61,51 @@ class RelayServer:
         )
         self.broker = ConnectionBroker(self.session_manager)
         self._cleanup_task: asyncio.Task[None] | None = None
+        # Per-IP timestamps of recent /client/connect attempts, for rate limiting.
+        self._connect_attempts: dict[str, deque[float]] = defaultdict(deque)
+
+    def build_app(self) -> web.Application:
+        """Build the aiohttp application.
+
+        Separate from :meth:`start` so tests can drive the routes without
+        binding a port or entering the run-forever loop.
+        """
+        app = web.Application()
+        app.router.add_get("/health", self._handle_health)
+        app.router.add_get("/server/register", self._handle_server_register)
+        app.router.add_get("/client/connect", self._handle_client_connect)
+        return app
+
+    def _authorized(self, request: web.Request) -> bool:
+        """Check the bearer token, if this relay requires one."""
+        expected = self.settings.token
+        if not expected:
+            return True
+        header = request.headers.get("Authorization", "")
+        scheme, _, presented = header.partition(" ")
+        return scheme.lower() == "bearer" and secrets.compare_digest(presented, expected)
+
+    def _rate_limited(self, request: web.Request) -> bool:
+        """Return True if this client IP has exceeded the connect rate limit.
+
+        Connection codes are short enough to be worth guessing, so cap how fast
+        anyone can try them.
+        """
+        ip = request.remote or "unknown"
+        now = time.monotonic()
+        attempts = self._connect_attempts[ip]
+        while attempts and now - attempts[0] > CONNECT_RATE_WINDOW_SECONDS:
+            attempts.popleft()
+        if len(attempts) >= CONNECT_RATE_MAX_ATTEMPTS:
+            return True
+        attempts.append(now)
+        return False
 
     async def start(self) -> None:
         """Start the relay server."""
         setup_logging(level=self.settings.log_level)
 
-        app = web.Application()
-        app.router.add_get("/health", self._handle_health)
-        app.router.add_get("/server/register", self._handle_server_register)
-        app.router.add_get("/client/connect", self._handle_client_connect)
+        app = self.build_app()
 
         # Start cleanup task
         self._cleanup_task = asyncio.create_task(self._cleanup_loop())
@@ -70,20 +115,31 @@ class RelayServer:
         site = web.TCPSite(runner, self.settings.host, self.settings.port)
         await site.start()
 
+        # On a PaaS the container's LAN IP is meaningless; show the public
+        # domain the platform assigned instead.
+        public_domain = os.environ.get("RAILWAY_PUBLIC_DOMAIN")
+        connect_url = f"wss://{public_domain}" if public_domain else None
         local_ip = get_local_ip()
 
         print("\n=== Wayport Relay Server ===")
         print(f"Listening on: {self.settings.host}:{self.settings.port}")
-        print(f"Local IP: {local_ip}")
+        print(f"Auth: {'bearer token required' if self.settings.token else 'OPEN (no token)'}")
         print("\nConnect using:")
-        print(f"  ws://{local_ip}:{self.settings.port}")
+        print(f"  {connect_url or f'ws://{local_ip}:{self.settings.port}'}")
         print("=" * 30 + "\n")
+
+        if not self.settings.token:
+            logger.warning(
+                "Relay is running without a token; anyone who can reach it can use it. "
+                "Set WAYPORT_RELAY_TOKEN before exposing it publicly."
+            )
 
         logger.info(
             "Relay server started",
             host=self.settings.host,
             port=self.settings.port,
-            local_ip=local_ip,
+            public_domain=public_domain,
+            authenticated=bool(self.settings.token),
         )
 
         # Keep running
@@ -103,7 +159,11 @@ class RelayServer:
 
     async def _handle_server_register(self, request: web.Request) -> web.Response:
         """Handle exit node registration WebSocket connection."""
-        ws = web.WebSocketResponse()
+        if not self._authorized(request):
+            logger.warning("Rejected unauthorized exit node", remote=request.remote)
+            return web.json_response({"error": "unauthorized"}, status=401)
+
+        ws = web.WebSocketResponse(heartbeat=WS_HEARTBEAT_SECONDS)
         await ws.prepare(request)
 
         session_id = str(uuid4())
@@ -140,7 +200,14 @@ class RelayServer:
 
     async def _handle_client_connect(self, request: web.Request) -> web.Response:
         """Handle client connection WebSocket."""
-        ws = web.WebSocketResponse()
+        if not self._authorized(request):
+            logger.warning("Rejected unauthorized client", remote=request.remote)
+            return web.json_response({"error": "unauthorized"}, status=401)
+        if self._rate_limited(request):
+            logger.warning("Rate limited client", remote=request.remote)
+            return web.json_response({"error": "rate_limited"}, status=429)
+
+        ws = web.WebSocketResponse(heartbeat=WS_HEARTBEAT_SECONDS)
         await ws.prepare(request)
 
         session_id = str(uuid4())

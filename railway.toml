@@ -1,0 +1,15 @@
+[build]
+builder = "dockerfile"
+
+[deploy]
+healthcheckPath = "/health"
+healthcheckTimeout = 30
+restartPolicyType = "on_failure"
+restartPolicyMaxRetries = 10
+
+# MUST stay 1. All session state (connection codes, exit-node registrations,
+# client<->exit-node pairings) lives in memory in relay/session.py. With two
+# replicas an exit node registers on one instance while the client's code
+# lookup lands on the other, and pairing fails roughly half the time.
+# Scaling horizontally requires moving session state to Redis first.
+numReplicas = 1

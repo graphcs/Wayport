@@ -5,8 +5,10 @@ from __future__ import annotations
 import platform
 from typing import Literal
 
-from pydantic import Field
+from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+from wayport.common.defaults import DEFAULT_RELAY_URL
 
 
 def get_default_device_name() -> str:
@@ -17,10 +19,22 @@ def get_default_device_name() -> str:
 class RelaySettings(BaseSettings):
     """Settings for the relay server."""
 
-    model_config = SettingsConfigDict(env_prefix="WAYPORT_RELAY_")
+    # populate_by_name so `RelaySettings(port=...)` still works alongside the
+    # validation_alias on `port` below.
+    model_config = SettingsConfigDict(env_prefix="WAYPORT_RELAY_", populate_by_name=True)
 
     host: str = "0.0.0.0"
-    port: int = 8080
+    # Railway (and most PaaS) inject the port to bind as $PORT, so accept that
+    # as well as the prefixed name.
+    port: int = Field(
+        default=8080,
+        validation_alias=AliasChoices("WAYPORT_RELAY_PORT", "PORT"),
+    )
+
+    # Shared bearer token required of exit nodes and clients. When unset the
+    # relay serves openly (convenient for local development) but logs a warning
+    # on every connection -- a public relay must always set this.
+    token: str | None = None
 
     # Code settings
     code_length: int = 6
@@ -40,7 +54,10 @@ class ExitNodeSettings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="WAYPORT_EXITNODE_")
 
     # Relay connection
-    relay_url: str = "ws://localhost:8080"
+    relay_url: str = DEFAULT_RELAY_URL
+
+    # Shared bearer token for the relay; must match the relay's own token.
+    relay_token: str | None = None
 
     # Device identification
     device_name: str = Field(default_factory=get_default_device_name)
@@ -66,7 +83,10 @@ class ClientSettings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="WAYPORT_CLIENT_")
 
     # Relay connection
-    relay_url: str = "ws://localhost:8080"
+    relay_url: str = DEFAULT_RELAY_URL
+
+    # Shared bearer token for the relay; must match the relay's own token.
+    relay_token: str | None = None
 
     # Local SOCKS proxy
     proxy_host: str = "127.0.0.1"
