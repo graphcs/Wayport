@@ -161,7 +161,8 @@ class Message:
         """Parse JSON string to dictionary."""
         if isinstance(data, bytes):
             data = data.decode("utf-8")
-        return json.loads(data)
+        parsed: dict[str, Any] = json.loads(data)
+        return parsed
 
 
 # -----------------------------------------------------------------------------

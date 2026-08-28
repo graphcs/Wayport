@@ -38,7 +38,7 @@ def get_local_ip() -> str:
         # This doesn't actually send any data
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         s.connect(("8.8.8.8", 80))
-        ip = s.getsockname()[0]
+        ip: str = s.getsockname()[0]
         s.close()
         return ip
     except Exception:
@@ -157,7 +157,7 @@ class RelayServer:
         """Health check endpoint. `request` is required by the aiohttp handler signature."""
         return web.json_response({"status": "ok"})
 
-    async def _handle_server_register(self, request: web.Request) -> web.Response:
+    async def _handle_server_register(self, request: web.Request) -> web.StreamResponse:
         """Handle exit node registration WebSocket connection."""
         if not self._authorized(request):
             logger.warning("Rejected unauthorized exit node", remote=request.remote)
@@ -198,7 +198,7 @@ class RelayServer:
 
         return ws
 
-    async def _handle_client_connect(self, request: web.Request) -> web.Response:
+    async def _handle_client_connect(self, request: web.Request) -> web.StreamResponse:
         """Handle client connection WebSocket."""
         if not self._authorized(request):
             logger.warning("Rejected unauthorized client", remote=request.remote)
