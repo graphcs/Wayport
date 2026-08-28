@@ -7,14 +7,13 @@ outbound connections to the internet.
 from __future__ import annotations
 
 import asyncio
-import socket
+import contextlib
 from typing import TYPE_CHECKING
 
 from wayport.common.logging import get_logger
 from wayport.common.protocol import (
     Frame,
     FrameType,
-    Socks5AddressType,
     Socks5Reply,
     StreamOpenRequest,
 )
@@ -60,15 +59,11 @@ class StreamConnection:
         """Stop the connection."""
         if self._read_task:
             self._read_task.cancel()
-            try:
+            with contextlib.suppress(asyncio.CancelledError):
                 await self._read_task
-            except asyncio.CancelledError:
-                pass
         self.writer.close()
-        try:
+        with contextlib.suppress(Exception):
             await self.writer.wait_closed()
-        except Exception:
-            pass
 
     async def write(self, data: bytes) -> None:
         """Write data to the destination.
@@ -171,7 +166,7 @@ class SocksHandler:
                     asyncio.open_connection(request.dest_addr, request.dest_port),
                     timeout=30.0,
                 )
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 logger.debug("Connection timeout", stream_id=stream_id)
                 await self._send_open_response(stream_id, Socks5Reply.HOST_UNREACHABLE)
                 return
@@ -275,9 +270,7 @@ class SocksHandler:
             return Socks5Reply.CONNECTION_REFUSED
         elif error.errno == errno.ENETUNREACH:
             return Socks5Reply.NETWORK_UNREACHABLE
-        elif error.errno == errno.EHOSTUNREACH:
-            return Socks5Reply.HOST_UNREACHABLE
-        elif error.errno == errno.ETIMEDOUT:
+        elif error.errno == errno.EHOSTUNREACH or error.errno == errno.ETIMEDOUT:
             return Socks5Reply.HOST_UNREACHABLE
         else:
             return Socks5Reply.GENERAL_FAILURE

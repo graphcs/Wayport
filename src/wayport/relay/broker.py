@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import asyncio
+import contextlib
 from typing import TYPE_CHECKING
 from uuid import uuid4
 
@@ -16,7 +16,7 @@ from wayport.common.protocol import (
 )
 
 if TYPE_CHECKING:
-    from wayport.relay.session import ClientSession, ExitNodeSession, SessionManager
+    from wayport.relay.session import ClientSession, SessionManager
 
 logger = get_logger(__name__)
 
@@ -164,18 +164,14 @@ class ConnectionBroker:
         if exitnode_id:
             exitnode = self.session_manager.get_exitnode(exitnode_id)
             if exitnode:
-                try:
+                with contextlib.suppress(Exception):
                     await exitnode.websocket.send_str(msg_json)
-                except Exception:
-                    pass
 
         if client_id:
             client = self.session_manager.get_client(client_id)
             if client:
-                try:
+                with contextlib.suppress(Exception):
                     await client.websocket.send_str(msg_json)
-                except Exception:
-                    pass
 
         logger.info("Tunnel disconnected", tunnel_id=tunnel_id, reason=reason)
 
@@ -213,7 +209,5 @@ class ConnectionBroker:
             error_message: Human-readable error message
         """
         msg = ErrorMessage(error_code=error_code, error_message=error_message)
-        try:
+        with contextlib.suppress(Exception):
             await session.websocket.send_str(msg.to_json())
-        except Exception:
-            pass

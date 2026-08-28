@@ -149,8 +149,8 @@ def run_server(args: argparse.Namespace) -> None:
 
 def run_client(args: argparse.Namespace) -> None:
     """Run the client."""
-    from wayport.common.config import ClientSettings
     from wayport.client.client import run_client as run_client_impl
+    from wayport.common.config import ClientSettings
 
     # Prompt for secret if encryption enabled
     secret = None

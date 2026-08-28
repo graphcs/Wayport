@@ -139,7 +139,7 @@ class ExitNodeServer:
         """Start the exit node server."""
         setup_logging(level=self.settings.log_level)
 
-        print(f"\n=== Wayport Exit Node ===")
+        print("\n=== Wayport Exit Node ===")
         print(f"Device: {self.settings.device_name}")
         print(f"Relay: {self.settings.relay_url}")
         print(f"Code: {self.preferred_code} (deterministic from device name)")
@@ -269,7 +269,7 @@ class ExitNodeServer:
         self._current_code = code
         self._health.current_code = code
         print(f"\n\n*** CONNECTION CODE: {code} ***")
-        print(f"Share this code with the client to connect")
+        print("Share this code with the client to connect")
         print("=" * 30 + "\n")
         if self._on_code_received:
             self._on_code_received(code, expires_at)
@@ -312,16 +312,16 @@ class ExitNodeServer:
         if status == "connected":
             self._health.connected = True
             self._health.reconnect_count += 1
-            print(f"\n[+] Connected to relay")
+            print("\n[+] Connected to relay")
         elif status == "disconnected":
             self._health.connected = False
             self._current_code = None
             self._health.current_code = None
-            print(f"\n[!] Disconnected from relay, reconnecting...")
+            print("\n[!] Disconnected from relay, reconnecting...")
         elif status == "connecting":
             # Clear stale queues when starting a new connection attempt
             self._clear_stale_queues()
-            print(f"\n[~] Connecting to relay...")
+            print("\n[~] Connecting to relay...")
 
         if self._on_connection_status:
             self._on_connection_status(status)

@@ -4,10 +4,22 @@ from __future__ import annotations
 
 import asyncio
 import socket
-from datetime import datetime, timezone
 from uuid import uuid4
 
 from aiohttp import WSMsgType, web
+
+from wayport.common.config import RelaySettings
+from wayport.common.logging import get_logger, setup_logging
+from wayport.common.protocol import (
+    Message,
+    MessageType,
+    PongMessage,
+    RegisteredMessage,
+)
+from wayport.relay.broker import ConnectionBroker
+from wayport.relay.session import ClientSession, SessionManager
+
+logger = get_logger(__name__)
 
 
 def get_local_ip() -> str:
@@ -22,19 +34,6 @@ def get_local_ip() -> str:
         return ip
     except Exception:
         return "127.0.0.1"
-
-from wayport.common.config import RelaySettings
-from wayport.common.logging import get_logger, setup_logging
-from wayport.common.protocol import (
-    Message,
-    MessageType,
-    PongMessage,
-    RegisteredMessage,
-)
-from wayport.relay.broker import ConnectionBroker
-from wayport.relay.session import SessionManager
-
-logger = get_logger(__name__)
 
 
 class RelayServer:
@@ -73,10 +72,10 @@ class RelayServer:
 
         local_ip = get_local_ip()
 
-        print(f"\n=== Wayport Relay Server ===")
+        print("\n=== Wayport Relay Server ===")
         print(f"Listening on: {self.settings.host}:{self.settings.port}")
         print(f"Local IP: {local_ip}")
-        print(f"\nConnect using:")
+        print("\nConnect using:")
         print(f"  ws://{local_ip}:{self.settings.port}")
         print("=" * 30 + "\n")
 
@@ -98,8 +97,8 @@ class RelayServer:
                 self._cleanup_task.cancel()
             await runner.cleanup()
 
-    async def _handle_health(self, request: web.Request) -> web.Response:
-        """Health check endpoint."""
+    async def _handle_health(self, request: web.Request) -> web.Response:  # noqa: ARG002
+        """Health check endpoint. `request` is required by the aiohttp handler signature."""
         return web.json_response({"status": "ok"})
 
     async def _handle_server_register(self, request: web.Request) -> web.Response:
@@ -227,7 +226,7 @@ class RelayServer:
 
     async def _handle_client_message(
         self,
-        session: "ClientSession",
+        session: ClientSession,
         data: str,
     ) -> None:
         """Handle a message from a client.
@@ -236,7 +235,6 @@ class RelayServer:
             session: Client session
             data: JSON message data
         """
-        from wayport.relay.session import ClientSession
 
         try:
             msg = Message.from_json(data)

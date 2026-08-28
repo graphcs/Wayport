@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import random
-from typing import TYPE_CHECKING, Callable
+from collections.abc import Callable
+from typing import TYPE_CHECKING
 
 import aiohttp
 from aiohttp import WSMsgType
@@ -12,7 +14,6 @@ from aiohttp import WSMsgType
 from wayport.common.logging import get_logger
 from wayport.common.protocol import (
     Frame,
-    FrameType,
     Message,
     MessageType,
     PingMessage,
@@ -30,7 +31,7 @@ class ExitNodeTunnel:
 
     def __init__(
         self,
-        settings: "ExitNodeSettings",
+        settings: ExitNodeSettings,
         preferred_code: str | None = None,
         on_code_received: Callable[[str, str], None] | None = None,
         on_client_connected: Callable[[str], None] | None = None,
@@ -155,10 +156,8 @@ class ExitNodeTunnel:
             finally:
                 if self._heartbeat_task:
                     self._heartbeat_task.cancel()
-                    try:
+                    with contextlib.suppress(asyncio.CancelledError):
                         await self._heartbeat_task
-                    except asyncio.CancelledError:
-                        pass
                 self._ws = None
                 self._current_tunnel_id = None
 

@@ -7,14 +7,12 @@ This module defines:
 
 from __future__ import annotations
 
+import json
 import struct
 from dataclasses import dataclass, field
 from enum import IntEnum
 from typing import Any
 from uuid import uuid4
-
-import json
-
 
 # =============================================================================
 # Frame Types for Binary Protocol
@@ -63,9 +61,7 @@ class Frame:
         """Decode bytes to frame."""
         if len(data) < FRAME_HEADER_SIZE:
             raise ValueError(f"Data too short: {len(data)} < {FRAME_HEADER_SIZE}")
-        frame_type, stream_id, length = struct.unpack(
-            FRAME_HEADER_FORMAT, data[:FRAME_HEADER_SIZE]
-        )
+        frame_type, stream_id, length = struct.unpack(FRAME_HEADER_FORMAT, data[:FRAME_HEADER_SIZE])
         payload = data[FRAME_HEADER_SIZE : FRAME_HEADER_SIZE + length]
         if len(payload) != length:
             raise ValueError(f"Incomplete payload: {len(payload)} != {length}")
