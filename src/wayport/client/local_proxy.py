@@ -132,24 +132,33 @@ class LocalProxyConnection:
         self.on_close(self.stream_id)
 
     async def _do_handshake(self) -> bool:
-        """Perform SOCKS5 handshake.
+        """Perform the SOCKS5 handshake, tolerating a truncated stream.
+
+        Returns:
+            True if the handshake succeeded, False otherwise.
+        """
+        try:
+            return await self._read_handshake()
+        except asyncio.IncompleteReadError:
+            # The client went away mid-handshake.
+            logger.debug("Handshake ended early", stream_id=self.stream_id)
+            return False
+
+    async def _read_handshake(self) -> bool:
+        """Read and validate the SOCKS5 greeting and CONNECT request.
 
         Returns:
             True if handshake succeeded, False otherwise
         """
         # Read greeting
-        data = await self.reader.read(2)
-        if len(data) < 2:
-            return False
+        data = await self.reader.readexactly(2)
 
         version, nmethods = data[0], data[1]
         if version != 0x05:
             return False
 
         # Read methods
-        methods = await self.reader.read(nmethods)
-        if len(methods) < nmethods:
-            return False
+        methods = await self.reader.readexactly(nmethods)
 
         # We only support no auth
         if Socks5AuthMethod.NO_AUTH not in methods:
@@ -162,9 +171,7 @@ class LocalProxyConnection:
         await self.writer.drain()
 
         # Read connect request
-        data = await self.reader.read(4)
-        if len(data) < 4:
-            return False
+        data = await self.reader.readexactly(4)
 
         version, cmd, _, atyp = data[0], data[1], data[2], data[3]
 
@@ -177,25 +184,17 @@ class LocalProxyConnection:
 
         # Read destination address
         if atyp == Socks5AddressType.IPV4:
-            addr_data = await self.reader.read(4)
-            if len(addr_data) < 4:
-                return False
+            addr_data = await self.reader.readexactly(4)
             import socket
 
             self._dest_addr = socket.inet_ntoa(addr_data)
         elif atyp == Socks5AddressType.DOMAIN:
-            length_data = await self.reader.read(1)
-            if len(length_data) < 1:
-                return False
+            length_data = await self.reader.readexactly(1)
             length = length_data[0]
-            addr_data = await self.reader.read(length)
-            if len(addr_data) < length:
-                return False
+            addr_data = await self.reader.readexactly(length)
             self._dest_addr = addr_data.decode("utf-8")
         elif atyp == Socks5AddressType.IPV6:
-            addr_data = await self.reader.read(16)
-            if len(addr_data) < 16:
-                return False
+            addr_data = await self.reader.readexactly(16)
             import socket
 
             self._dest_addr = socket.inet_ntop(socket.AF_INET6, addr_data)
@@ -204,9 +203,7 @@ class LocalProxyConnection:
             return False
 
         # Read port
-        port_data = await self.reader.read(2)
-        if len(port_data) < 2:
-            return False
+        port_data = await self.reader.readexactly(2)
         self._dest_port = struct.unpack("!H", port_data)[0]
 
         self._handshake_complete = True
