@@ -150,12 +150,12 @@ def test_recover_stale_restores_a_dead_run(fake: FakeNetworksetup, tmp_path: Pat
 def test_recover_stale_leaves_a_live_run_alone(
     fake: FakeNetworksetup,  # noqa: ARG001 - patches subprocess
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A second client must not rip the proxy out from under the first."""
-    import os
-
+    monkeypatch.setattr(sysproxy, "_process_alive", lambda _pid: True)
     (tmp_path / "proxy-state.json").write_text(
-        json.dumps({"backend": "macos", "pid": os.getppid(), "snapshot": {}, "changed": ["Wi-Fi"]})
+        json.dumps({"backend": "macos", "pid": 4242, "snapshot": {}, "changed": ["Wi-Fi"]})
     )
     assert recover_stale(backend=MacOSBackend()) is False
     assert (tmp_path / "proxy-state.json").exists()
@@ -165,3 +165,27 @@ def test_recover_stale_with_no_state_file_is_a_noop(
     fake: FakeNetworksetup,  # noqa: ARG001 - patches subprocess
 ) -> None:
     assert recover_stale(backend=MacOSBackend()) is False
+
+
+def test_process_alive_is_a_probe_not_a_kill() -> None:
+    """os.kill(pid, 0) is harmless on POSIX but terminates on Windows.
+
+    Regression test: this probe previously used os.kill unconditionally, which
+    on Windows maps to TerminateProcess and killed the process it asked about.
+    """
+    import os
+    import subprocess
+    import sys
+
+    proc = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])
+    try:
+        assert sysproxy._process_alive(proc.pid) is True
+        # The probe must not have disturbed it.
+        assert proc.poll() is None
+    finally:
+        proc.kill()
+        proc.wait(timeout=10)
+
+    assert sysproxy._process_alive(proc.pid) is False
+    assert sysproxy._process_alive(os.getpid()) is False
+    assert sysproxy._process_alive(-1) is False

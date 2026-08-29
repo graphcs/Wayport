@@ -35,6 +35,9 @@ logger = get_logger(__name__)
 
 COMMAND_TIMEOUT = 5.0
 
+# Windows GetExitCodeProcess sentinel for a process that has not exited.
+STILL_ACTIVE = 259
+
 
 @dataclass(frozen=True)
 class ProxySpec:
@@ -295,8 +298,31 @@ def recover_stale(force: bool = False, backend: Backend | None = None) -> bool:
 
 
 def _process_alive(pid: int) -> bool:
+    """Return True if a process with this id is still running.
+
+    Note the Windows branch: ``os.kill(pid, 0)`` is the POSIX idiom for this,
+    but on Windows ``os.kill`` maps to TerminateProcess for any signal other
+    than CTRL_C_EVENT/CTRL_BREAK_EVENT -- so the "harmless" probe would kill
+    the very process it is asking about.
+    """
     if pid <= 0 or pid == os.getpid():
         return False
+
+    if sys.platform == "win32":
+        import ctypes
+
+        # PROCESS_QUERY_LIMITED_INFORMATION; no rights to modify the process.
+        handle = ctypes.windll.kernel32.OpenProcess(0x1000, False, pid)
+        if not handle:
+            return False
+        try:
+            exit_code = ctypes.c_ulong()
+            if not ctypes.windll.kernel32.GetExitCodeProcess(handle, ctypes.byref(exit_code)):
+                return False
+            return exit_code.value == STILL_ACTIVE
+        finally:
+            ctypes.windll.kernel32.CloseHandle(handle)
+
     try:
         os.kill(pid, 0)
     except (OSError, ProcessLookupError):
