@@ -262,7 +262,7 @@ def get_backend() -> Backend:
     return UnsupportedBackend()
 
 
-def recover_stale(force: bool = False) -> bool:
+def recover_stale(force: bool = False, backend: Backend | None = None) -> bool:
     """Restore settings left behind by a run that did not clean up.
 
     Args:
@@ -280,7 +280,7 @@ def recover_stale(force: bool = False) -> bool:
     if not force and _process_alive(saved.get("pid", -1)):
         return False
 
-    backend = get_backend()
+    backend = backend if backend is not None else get_backend()
     if backend.name != saved.get("backend"):
         path.unlink(missing_ok=True)
         return False
@@ -307,9 +307,10 @@ def _process_alive(pid: int) -> bool:
 class SystemProxyGuard:
     """Apply a system proxy and guarantee it is put back."""
 
-    def __init__(self, spec: ProxySpec) -> None:
+    def __init__(self, spec: ProxySpec, backend: Backend | None = None) -> None:
         self.spec = spec
-        self.backend = get_backend()
+        # Injectable so tests never touch the host's real network settings.
+        self.backend = backend if backend is not None else get_backend()
         self.active = False
         self.reason: str | None = None
         self._snapshot: dict[str, Any] = {}
@@ -355,6 +356,9 @@ class SystemProxyGuard:
         if not self.active:
             return
         self.active = False
+        with contextlib.suppress(Exception):
+            atexit.unregister(self.disable)
+            self._registered = False
         try:
             self.backend.restore(self._snapshot, self._changed)
         except Exception as exc:

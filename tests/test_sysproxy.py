@@ -50,7 +50,6 @@ def fake(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> FakeNetworksetup:
     monkeypatch.setattr(sysproxy, "_run", lambda cmd: stub(cmd))
     monkeypatch.setenv("WAYPORT_CONFIG_DIR", str(tmp_path))
     monkeypatch.setattr(MacOSBackend, "available", lambda _self: (True, ""))
-    monkeypatch.setattr(sysproxy, "get_backend", MacOSBackend)
     return stub
 
 
@@ -60,16 +59,20 @@ def _args(calls: list[list[str]], flag: str) -> list[list[str]]:
 
 def test_disabled_services_are_skipped(fake: FakeNetworksetup) -> None:
     """A service prefixed with * is off and must not be touched."""
-    guard = SystemProxyGuard(ProxySpec("127.0.0.1", 1080))
+    guard = SystemProxyGuard(ProxySpec("127.0.0.1", 1080), backend=MacOSBackend())
     assert guard.enable()
-    configured = {c[2] for c in _args(fake.calls, "-setsocksfirewallproxy")}
-    assert configured == {"Wi-Fi", "Ethernet"}
-    assert "Old" not in configured
+    try:
+        configured = {c[2] for c in _args(fake.calls, "-setsocksfirewallproxy")}
+        assert configured == {"Wi-Fi", "Ethernet"}
+        assert "Old" not in configured
+    finally:
+        # Leave nothing for the atexit handler to act on after the test run.
+        guard.disable()
 
 
 def test_apply_then_restore_returns_previous_values(fake: FakeNetworksetup) -> None:
     """Restore must put the address back, not merely switch the proxy off."""
-    guard = SystemProxyGuard(ProxySpec("127.0.0.1", 1080))
+    guard = SystemProxyGuard(ProxySpec("127.0.0.1", 1080), backend=MacOSBackend())
     assert guard.enable()
     fake.calls.clear()
     guard.disable()
@@ -92,7 +95,7 @@ def test_previously_enabled_proxy_is_left_enabled(
     monkeypatch.setenv("WAYPORT_CONFIG_DIR", str(tmp_path))
     monkeypatch.setattr(MacOSBackend, "available", lambda _self: (True, ""))
 
-    guard = SystemProxyGuard(ProxySpec("127.0.0.1", 1080))
+    guard = SystemProxyGuard(ProxySpec("127.0.0.1", 1080), backend=MacOSBackend())
     assert guard.enable()
     stub.calls.clear()
     guard.disable()
@@ -107,7 +110,7 @@ def test_state_file_written_while_active_and_removed_after(
 ) -> None:
     """The state file is what makes recovery after kill -9 possible."""
     state = tmp_path / "proxy-state.json"
-    guard = SystemProxyGuard(ProxySpec("127.0.0.1", 1080))
+    guard = SystemProxyGuard(ProxySpec("127.0.0.1", 1080), backend=MacOSBackend())
     guard.enable()
     assert state.exists()
     saved = json.loads(state.read_text())
@@ -119,7 +122,7 @@ def test_state_file_written_while_active_and_removed_after(
 
 
 def test_toggle_flips_state(fake: FakeNetworksetup) -> None:  # noqa: ARG001 - patches subprocess
-    guard = SystemProxyGuard(ProxySpec("127.0.0.1", 1080))
+    guard = SystemProxyGuard(ProxySpec("127.0.0.1", 1080), backend=MacOSBackend())
     assert guard.toggle() is True
     assert guard.active is True
     assert guard.toggle() is False
@@ -139,7 +142,7 @@ def test_recover_stale_restores_a_dead_run(fake: FakeNetworksetup, tmp_path: Pat
         )
     )
     fake.calls.clear()
-    assert recover_stale() is True
+    assert recover_stale(backend=MacOSBackend()) is True
     assert not (tmp_path / "proxy-state.json").exists()
     assert _args(fake.calls, "-setsocksfirewallproxystate")
 
@@ -154,11 +157,11 @@ def test_recover_stale_leaves_a_live_run_alone(
     (tmp_path / "proxy-state.json").write_text(
         json.dumps({"backend": "macos", "pid": os.getppid(), "snapshot": {}, "changed": ["Wi-Fi"]})
     )
-    assert recover_stale() is False
+    assert recover_stale(backend=MacOSBackend()) is False
     assert (tmp_path / "proxy-state.json").exists()
 
 
 def test_recover_stale_with_no_state_file_is_a_noop(
     fake: FakeNetworksetup,  # noqa: ARG001 - patches subprocess
 ) -> None:
-    assert recover_stale() is False
+    assert recover_stale(backend=MacOSBackend()) is False
