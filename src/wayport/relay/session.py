@@ -9,6 +9,8 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 
+from wayport.common.codes import code_key
+
 if TYPE_CHECKING:
     from aiohttp import web
 
@@ -131,8 +133,8 @@ class SessionManager:
         # Try to use preferred code if available and not in use
         code = None
         if preferred_code:
-            preferred_code = preferred_code.upper()
-            if preferred_code not in self._codes:
+            preferred_code = preferred_code.strip()
+            if code_key(preferred_code) not in self._codes:
                 code = preferred_code
 
         # Generate a unique code if preferred not available
@@ -150,7 +152,7 @@ class SessionManager:
         )
 
         self._exitnodes[session_id] = session
-        self._codes[code] = session_id
+        self._codes[code_key(code)] = session_id
 
         return session
 
@@ -184,15 +186,15 @@ class SessionManager:
         Returns:
             The ExitNodeSession if found and valid, None otherwise
         """
-        code = code.upper()
-        session_id = self._codes.get(code)
+        key = code_key(code)
+        session_id = self._codes.get(key)
         if session_id is None:
             return None
 
         session = self._exitnodes.get(session_id)
         if session is None:
             # Clean up orphaned code
-            del self._codes[code]
+            del self._codes[key]
             return None
 
         if session.is_expired():
@@ -218,7 +220,7 @@ class SessionManager:
         """
         session = self._exitnodes.pop(session_id, None)
         if session:
-            self._codes.pop(session.code, None)
+            self._codes.pop(code_key(session.code), None)
 
     def remove_client_session(self, session_id: str) -> None:
         """Remove a client session.

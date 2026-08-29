@@ -65,6 +65,13 @@ strict = true
 warn_return_any = true
 warn_unused_ignores = true
 
+[[tool.mypy.overrides]]
+# winreg exists only on Windows; on macOS/Linux mypy sees an empty module, so
+# every registry attribute reads as missing. The code is guarded at runtime by
+# a sys.platform check.
+module = "wayport.common.sysproxy"
+disable_error_code = ["attr-defined"]
+
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
