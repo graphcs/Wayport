@@ -12,6 +12,7 @@ import aiohttp
 from aiohttp import WSMsgType
 
 from wayport.common.defaults import WS_HEARTBEAT_SECONDS
+from wayport.common.errors import FatalTunnelError
 from wayport.common.logging import get_logger
 from wayport.common.protocol import (
     ConnectMessage,
@@ -25,6 +26,26 @@ if TYPE_CHECKING:
     from wayport.common.config import ClientSettings
 
 logger = get_logger(__name__)
+
+# Errors that will never succeed on retry: the code is wrong or the peer is
+# unavailable in a way a reconnect cannot change.
+FATAL_ERROR_CODES = frozenset(
+    {"invalid_code", "code_expired", "server_not_found", "server_busy", "unauthorized"}
+)
+
+_FATAL_HINTS = {
+    "invalid_code": "Check the code, or run `wayport share` again on the other machine\n"
+    "to see its current one.",
+    "code_expired": "Codes last 24 hours. Run `wayport share` again for a fresh one.",
+    "server_not_found": "That machine is not sharing right now.",
+    "server_busy": "That machine already has a client connected;\n"
+    "only one connection at a time is supported.",
+    "unauthorized": "The relay rejected the token. Check `wayport setup --show`.",
+}
+
+
+def _fatal_error(code: str, message: str) -> FatalTunnelError:
+    return FatalTunnelError(message or code, _FATAL_HINTS.get(code), code=code)
 
 
 class ClientTunnel:
@@ -59,6 +80,7 @@ class ClientTunnel:
         self._ws: aiohttp.ClientWebSocketResponse | None = None
         self._session: aiohttp.ClientSession | None = None
         self._running = False
+        self._fatal: tuple[str, str] | None = None
         self._tunnel_id: str | None = None
         self._peer_device_name: str | None = None
         self._heartbeat_task: asyncio.Task[None] | None = None
@@ -94,8 +116,9 @@ class ClientTunnel:
         Returns:
             True if connection initiated, False otherwise
         """
-        self._code = code.upper()
+        self._code = code.strip()
         self._running = True
+        self._fatal = None
         self._session = aiohttp.ClientSession(trust_env=False)
 
         try:
@@ -111,8 +134,9 @@ class ClientTunnel:
         Args:
             code: The connection code
         """
-        self._code = code.upper()
+        self._code = code.strip()
         self._running = True
+        self._fatal = None
         self._session = aiohttp.ClientSession(trust_env=False)
 
         while self._running:
@@ -122,6 +146,9 @@ class ClientTunnel:
                 break
             except Exception as e:
                 logger.error("Connection error", error=str(e))
+
+            if self._fatal:
+                break
 
             if self._running:
                 self._notify_status("disconnected")
@@ -137,6 +164,9 @@ class ClientTunnel:
 
         if self._session:
             await self._session.close()
+
+        if self._fatal:
+            raise _fatal_error(*self._fatal)
 
     async def stop(self) -> None:
         """Stop the tunnel connection."""
@@ -243,11 +273,20 @@ class ClientTunnel:
             elif msg_type == MessageType.ERROR:
                 error_code = msg.get("error_code", "")
                 error_message = msg.get("error_message", "")
-                logger.error("Relay error", code=error_code, message=error_message)
+                # Reported to the user by the caller; keep it out of the way
+                # here so the readable error is not preceded by a raw log line.
+                logger.debug("Relay error", code=error_code, message=error_message)
+                if error_code in FATAL_ERROR_CODES:
+                    # Retrying cannot fix these, and looping on them looks
+                    # exactly like a hang to the person waiting.
+                    self._fatal = (error_code, error_message)
+                    self._running = False
+                    with contextlib.suppress(Exception):
+                        if self._ws:
+                            await self._ws.close()
+                    return
                 if self.on_error:
                     self.on_error(error_code, error_message)
-                # Never give up - always retry, even on invalid_code or code_expired
-                # The exit node may come back online with the same code
 
             elif msg_type == MessageType.PONG:
                 pass  # Heartbeat response

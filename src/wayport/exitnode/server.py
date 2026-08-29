@@ -3,14 +3,14 @@
 from __future__ import annotations
 
 import asyncio
-import sys
 import time
 from typing import TYPE_CHECKING
 
 from wayport.common.config import ExitNodeSettings
 from wayport.common.crypto import decrypt, derive_key, encrypt
-from wayport.common.logging import get_logger, setup_logging
+from wayport.common.logging import get_logger
 from wayport.common.protocol import Frame
+from wayport.common.ui import ui
 from wayport.exitnode.socks import SocksHandler
 from wayport.exitnode.tunnel import ExitNodeTunnel
 from wayport.relay.session import generate_deterministic_code
@@ -137,16 +137,13 @@ class ExitNodeServer:
 
     async def start(self) -> None:
         """Start the exit node server."""
-        setup_logging(level=self.settings.log_level)
 
-        print("\n=== Wayport Exit Node ===")
-        print(f"Device: {self.settings.device_name}")
-        print(f"Relay: {self.settings.relay_url}")
-        print(f"Code: {self.preferred_code} (deterministic from device name)")
+        ui.banner("Wayport", "Sharing this machine's internet connection")
+        ui.blank()
+        ui.field("Device", self.settings.device_name)
         if self._encryption_key:
-            print("Encryption: ENABLED")
-        print("=" * 30)
-        print("Connecting to relay...")
+            ui.field("Encryption", "on")
+        ui.status("Connecting to relay...")
 
         # Create SOCKS handler
         self._socks_handler = SocksHandler(on_send_frame=self._queue_frame)
@@ -245,15 +242,22 @@ class ExitNodeServer:
             except Exception as e:
                 logger.error("Error processing frame", error=str(e))
 
+    def _status_line(self) -> str:
+        """Compose the single-line status display."""
+        health = self._health
+        state = "client connected" if health.client_connected else "waiting for a client"
+        return (
+            f"  {health.current_code or '...'}  |  {state}"
+            f"  |  up {health.bytes_sent / 1024:.1f}KB"
+            f"  |  down {health.bytes_received / 1024:.1f}KB"
+        )
+
     async def _status_loop(self) -> None:
         """Periodically print status to console."""
         while True:
             try:
-                await asyncio.sleep(5)
-                status = self._health.get_status_line()
-                # Use carriage return to update in place
-                sys.stdout.write(f"\r{status}    ")
-                sys.stdout.flush()
+                await asyncio.sleep(2)
+                ui.status(self._status_line())
             except asyncio.CancelledError:
                 break
             except Exception:
@@ -268,9 +272,10 @@ class ExitNodeServer:
         """
         self._current_code = code
         self._health.current_code = code
-        print(f"\n\n*** CONNECTION CODE: {code} ***")
-        print("Share this code with the client to connect")
-        print("=" * 30 + "\n")
+        ui.field("Your code", code, emphasis=True)
+        ui.blank()
+        ui.hint([f"On the other machine, run:  wayport connect {code}"])
+        ui.blank()
         if self._on_code_received:
             self._on_code_received(code, expires_at)
 
@@ -281,7 +286,7 @@ class ExitNodeServer:
             tunnel_id: The tunnel ID
         """
         self._health.client_connected = True
-        print(f"\n[+] Client connected (tunnel: {tunnel_id[:8]}...)")
+        ui.success("A client connected.")
         logger.info("Client connected", tunnel_id=tunnel_id)
         if self._on_client_connected:
             self._on_client_connected(tunnel_id)
@@ -293,7 +298,7 @@ class ExitNodeServer:
             reason: Disconnection reason
         """
         self._health.client_connected = False
-        print(f"\n[-] Client disconnected: {reason}")
+        ui.info(f"Client disconnected: {reason}")
         logger.info("Client disconnected", reason=reason)
 
         # Close all streams
@@ -312,16 +317,16 @@ class ExitNodeServer:
         if status == "connected":
             self._health.connected = True
             self._health.reconnect_count += 1
-            print("\n[+] Connected to relay")
+            ui.status("Connected to relay, waiting for a client...")
         elif status == "disconnected":
             self._health.connected = False
             self._current_code = None
             self._health.current_code = None
-            print("\n[!] Disconnected from relay, reconnecting...")
+            ui.status("Disconnected from relay, reconnecting...")
         elif status == "connecting":
             # Clear stale queues when starting a new connection attempt
             self._clear_stale_queues()
-            print("\n[~] Connecting to relay...")
+            ui.status("Connecting to relay...")
 
         if self._on_connection_status:
             self._on_connection_status(status)

@@ -15,6 +15,10 @@ def setup_logging(
 ) -> None:
     """Configure structlog for the application.
 
+    Diagnostics always go to **stderr**. Human-facing output is written to
+    stdout by `wayport.common.ui`, and the two sharing a stream is what used to
+    shred the status line.
+
     Args:
         level: Log level (DEBUG, INFO, WARNING, ERROR)
         json_output: If True, output JSON format; otherwise pretty console output
@@ -45,14 +49,16 @@ def setup_logging(
         # Pretty console output for development
         processors = [
             *shared_processors,
-            structlog.dev.ConsoleRenderer(colors=True),
+            structlog.dev.ConsoleRenderer(colors=sys.stderr.isatty()),
         ]
 
     structlog.configure(
         processors=processors,
         wrapper_class=structlog.make_filtering_bound_logger(getattr(logging, level)),
         context_class=dict,
-        logger_factory=structlog.PrintLoggerFactory(),
+        # stderr, not stdout: PrintLoggerFactory() would write to stdout and
+        # collide with the status line.
+        logger_factory=structlog.WriteLoggerFactory(file=sys.stderr),
         cache_logger_on_first_use=True,
     )
 

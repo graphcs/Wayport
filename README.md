@@ -1,298 +1,157 @@
 # Wayport
 
-Share your internet connection between computers. One computer (the "exit node") shares its internet, and other computers (clients) can browse the web through it.
+Share one machine's internet connection with another, over an encrypted tunnel.
 
-**Use case:** Access IP-restricted websites from a different computer by routing traffic through a machine that has access.
-
-## How It Works
+Run `wayport share` on the machine whose connection you want to use, and
+`wayport connect <code>` on the machine that should use it. A browser window
+opens on the second machine whose traffic exits from the first. Nothing else on
+that machine is affected unless you ask for it.
 
 ```
-Your Computer                    Relay Server                   Exit Node
-(Client)                         (in the cloud)                 (shares internet)
-    |                                 |                              |
-    |-------- connects to ----------->|<-------- connects to --------|
-    |                                 |                              |
-    | Browser traffic flows through the tunnel to exit node          |
-    |================================================================|
+machine A                                machine B
+─────────────────────────────────        ─────────────────────────────────
+$ wayport share                          $ wayport connect blue-otter-42
+
+  Device      johns-macbook                Connected to  johns-macbook
+  Your code   blue-otter-42                Proxy         127.0.0.1:1080
+                                           Exiting via   203.0.113.5
+  ✓ A client connected.                    ✓ Opened a browser window.
+
+                                           [s] system proxy  [b] browser
 ```
 
-Your browser connects to a local proxy on your computer. Traffic goes through the relay to the exit node, which makes the actual internet requests. Websites see the exit node's IP address.
+## Install
 
----
-
-## Setup Instructions
-
-### Step 1: Install Python
-
-**Mac:**
-Python 3 is usually pre-installed. Check with:
-```bash
-python3 --version
-```
-If not installed, get it from https://www.python.org/downloads/
-
-**Windows:**
-1. Download Python from https://www.python.org/downloads/
-2. Run the installer
-3. **IMPORTANT:** Check the box "Add Python to PATH" during installation
-
----
-
-### Step 2: Download Wayport
+Python 3.11 or newer.
 
 ```bash
 git clone https://github.com/graphcs/Wayport.git
 cd Wayport
-```
-
-Or download and extract the ZIP from GitHub.
-
----
-
-### Step 3: Create Virtual Environment
-
-**Mac (Terminal):**
-```bash
-python3 -m venv .venv
-source .venv/bin/activate
-```
-
-**Windows (Command Prompt):**
-```cmd
-python -m venv .venv
-.venv\Scripts\activate
-```
-
-**Windows (PowerShell):**
-```powershell
-python -m venv .venv
-.venv\Scripts\Activate.ps1
-```
-
-If PowerShell gives an error about scripts being disabled, run this first:
-```powershell
-Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
-```
-
-You'll know it worked when you see `(.venv)` at the start of your command line.
-
----
-
-### Step 4: Install Wayport
-
-```bash
+python3 -m venv .venv && source .venv/bin/activate    # Windows: .venv\Scripts\activate
 pip install -e .
 ```
 
-**Windows only:** Also install colorama for colored output:
-```bash
-pip install colorama
-```
+## First run
 
----
-
-## Running Wayport
-
-You need 3 components running:
-
-### 1. Relay Server (run on a server both machines can reach)
+Once per machine:
 
 ```bash
-wayport relay
+wayport setup
 ```
 
-This starts on port 8080 by default. For a cloud server, make sure port 8080 is open.
+This asks for the relay URL and token and saves them to `~/.config/wayport/config.toml`
+(`%LOCALAPPDATA%\Wayport` on Windows) with owner-only permissions. Both machines
+need the **same relay token**. After that, neither side needs command-line flags.
 
-### 2. Exit Node (run on the computer sharing internet)
+Check everything is in order:
 
 ```bash
-wayport server --relay-url ws://RELAY_IP:8080
+wayport doctor
 ```
 
-Replace `RELAY_IP` with:
-- `localhost` if relay is on the same machine
-- The IP address or domain of your relay server
+## What gets routed
 
-You'll see a **connection code** like `ABC123`. Share this with the client.
+There is no per-application proxying on macOS, Windows or Linux without a signed
+system extension, so Wayport scopes traffic three ways instead. They compose.
 
-**Tip:** Use `--code MYCODE` to request a specific code:
+| Mode | What uses the tunnel | How |
+|---|---|---|
+| **Browser** (default) | One dedicated Chrome window | `wayport connect <code>` |
+| **Shell** | One terminal session | `wayport shell` |
+| **System** | Everything on the machine | press `s`, or `--mode system` |
+
+**Browser** is the default because it cannot break anything: your normal browser
+keeps using your normal connection, and the tunnelled window has its own profile.
+Good for a web app you want to reach from elsewhere.
+
+**Shell** covers command-line tools — `curl`, `git`, `gcloud`, `aws`, anything
+honouring proxy environment variables. Only that terminal is affected:
+
 ```bash
-wayport server --relay-url ws://RELAY_IP:8080 --code MYCODE
+wayport shell            # in a second terminal, while connect is running
+(wayport) $ gcloud ...   # goes through the tunnel
 ```
 
-### 3. Client (run on the computer that wants to use the shared internet)
+**System** routes the whole machine, including GUI apps that ignore environment
+variables. Press `s` while connected to toggle it on and off without dropping the
+tunnel. Previous settings are restored when you disconnect — including on Ctrl+C,
+and on the next launch if the process is killed outright.
 
-```bash
-wayport client ABC123 --relay-url ws://RELAY_IP:8080
-```
+If something does go wrong, `wayport restore` puts your network settings back.
 
-Replace `ABC123` with the code from the exit node.
+## Connection codes
 
----
+Each machine has a stable code like `blue-otter-42`, so you can memorise it. It is
+derived from a random key stored on that machine, not from its hostname — knowing
+the machine's name tells you nothing about its code. Rotate with
+`wayport share --new-code`.
 
-## Configure Your Browser
-
-Once connected, configure your browser to use the SOCKS5 proxy:
-
-**Firefox:**
-1. Settings → General → Network Settings → Settings
-2. Select "Manual proxy configuration"
-3. SOCKS Host: `127.0.0.1`
-4. Port: `1080`
-5. Select "SOCKS v5"
-6. Check "Proxy DNS when using SOCKS v5" (important!)
-7. Click OK
-
-**Chrome (Mac):**
-Chrome uses system proxy settings, or use an extension like "Proxy SwitchyOmega"
-
-**Chrome (Windows):**
-Settings → System → Open your computer's proxy settings, or use an extension
-
----
-
-## Quick Test (All on One Machine)
-
-Open 3 terminal windows:
-
-**Terminal 1 - Relay:**
-```bash
-cd Wayport
-source .venv/bin/activate  # or .venv\Scripts\activate on Windows
-wayport relay
-```
-
-**Terminal 2 - Exit Node:**
-```bash
-cd Wayport
-source .venv/bin/activate
-wayport server
-```
-Note the code shown (e.g., `ABC123`)
-
-**Terminal 3 - Client:**
-```bash
-cd Wayport
-source .venv/bin/activate
-wayport client ABC123
-```
-
-Then configure your browser to use SOCKS5 proxy at `127.0.0.1:1080`
-
----
-
-## All Command Options
-
-### Relay Server
-```bash
-wayport relay [OPTIONS]
-
-Options:
-  --host HOST        IP to bind to (default: 0.0.0.0)
-  --port PORT        Port to bind to (default: 8080)
-  --log-level LEVEL  DEBUG, INFO, WARNING, ERROR (default: INFO)
-```
-
-### Exit Node (Server)
-```bash
-wayport server [OPTIONS]
-
-Options:
-  --relay-url URL      Relay server URL (default: ws://localhost:8080)
-  --device-name NAME   Name shown to clients
-  --code CODE          Preferred connection code
-  --secret             Enable encryption (prompts for password)
-  --log-level LEVEL    DEBUG, INFO, WARNING, ERROR (default: INFO)
-```
-
-### Client
-```bash
-wayport client [CODE] [OPTIONS]
-
-Options:
-  CODE                 Connection code from exit node
-  --relay-url URL      Relay server URL (default: ws://localhost:8080)
-  --proxy-port PORT    Local SOCKS5 proxy port (default: 1080)
-  --secret             Enable encryption (prompts for password)
-  --log-level LEVEL    DEBUG, INFO, WARNING, ERROR (default: INFO)
-```
-
----
+Codes are matched loosely: `blue-otter-42`, `BLUE OTTER 42` and `BlueOtter42` all
+work. They expire 24 hours after registration, and one exit node serves one client
+at a time.
 
 ## Encryption
 
-Wayport supports optional end-to-end encryption. When enabled, all traffic between the client and exit node is encrypted using AES-256-GCM. The relay server cannot read the encrypted data.
+Set a shared secret during `wayport setup` and traffic is encrypted end to end with
+AES-256-GCM, so the relay cannot read it. Both machines must use the same secret.
 
-### Enable Encryption
+Without a secret the relay can see your traffic. It is a machine you control, but
+set a secret anyway.
 
-Add `--secret` to both the exit node and client commands:
+## Commands
 
-**Exit Node:**
-```bash
-wayport server --relay-url ws://RELAY_IP:8080 --secret
-Enter encryption secret: ********
-```
+| Command | What it does |
+|---|---|
+| `wayport share` | Share this machine's connection |
+| `wayport connect <code>` | Use another machine's connection |
+| `wayport shell` | Open a shell that uses a running tunnel |
+| `wayport setup` | Save relay settings (`--show` to print them) |
+| `wayport doctor` | Check configuration, relay, ports, browser |
+| `wayport restore` | Undo system proxy settings after a crash |
+| `wayport relay` | Run a relay server yourself |
 
-**Client:**
-```bash
-wayport client ABC123 --relay-url ws://RELAY_IP:8080 --secret
-Enter encryption secret: ********
-```
+Useful options: `--mode browser|system|none`, `--proxy-port auto`, `-v` for
+diagnostics, `-vv` for more.
 
-The secret is entered interactively (hidden input) so it doesn't appear in shell history.
+Configuration is read from, in order of precedence: command-line flags,
+`WAYPORT_*` environment variables, `config.toml`, then built-in defaults.
 
-**Important:** Both sides must use the same secret. If the secrets don't match, you'll see decryption errors and the connection won't work.
+## Running your own relay
 
----
+The relay brokers connections; both machines dial out to it, so neither needs an
+open inbound port. See [docs/deploy.md](docs/deploy.md) for deploying to Railway.
 
-## Status Display
-
-While running, you'll see a status line that updates every 5 seconds:
-
-```
-[OK] Code: ABC123 | Relay: CONNECTED | CLIENT | Sent: 4.5KB | Recv: 0.6KB
-```
-
-- `[OK]` = Everything working
-- `[~]` = Partially connected (waiting)
-- `[!]` = Disconnected (will auto-reconnect)
-
----
+Always set `WAYPORT_RELAY_TOKEN`. Without it, anyone who finds the URL can use
+your relay, and route traffic through whichever machine is sharing.
 
 ## Troubleshooting
 
-**"Address already in use" error:**
-Another process is using the port. Kill it:
-```bash
-# Mac/Linux
-pkill -f wayport
+**"Invalid or expired connection code"** — run `wayport share` on the other machine
+and use the code it prints. It exits immediately rather than retrying, so this is
+quick to spot.
 
-# Windows
-taskkill /F /IM python.exe
-```
+**The browser loads nothing** — check `wayport doctor`. If the two machines have
+different secrets, connecting fails with a clear message rather than hanging.
 
-**Client can't connect:**
-- Make sure relay URL is correct and reachable
-- Check firewall allows the relay port
-- Verify the connection code is correct
+**Port 1080 already in use** — another client is running. Use `--proxy-port auto`.
 
-**Browser not working through proxy:**
-- Make sure "Proxy DNS when using SOCKS v5" is checked in Firefox
-- Try visiting http://httpbin.org/ip to check your exit IP
+**Corporate TLS interception (Zscaler and similar)** — Wayport uses the operating
+system's trust store, so a corporate root CA already installed on the machine works
+without extra configuration.
 
-**SSL certificate errors (with corporate proxy like Zscaler):**
-You may need to install the corporate root CA certificate on your client machine.
+**Network settings look wrong after a crash** — `wayport restore`.
 
----
-
-## Environment Variables
-
-Instead of command-line options, you can use environment variables:
+## Development
 
 ```bash
-WAYPORT_RELAY_HOST=0.0.0.0
-WAYPORT_RELAY_PORT=8080
-WAYPORT_EXITNODE_RELAY_URL=ws://relay.example.com:8080
-WAYPORT_CLIENT_RELAY_URL=ws://relay.example.com:8080
-WAYPORT_CLIENT_PROXY_PORT=1080
+pip install -e ".[dev]"
+ruff check src tests && ruff format --check src tests
+mypy src/wayport
+pytest -q
 ```
+
+CI runs the same checks on macOS, Windows and Linux.
+
+## License
+
+MIT
