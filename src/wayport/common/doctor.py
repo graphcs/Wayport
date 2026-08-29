@@ -32,11 +32,9 @@ async def run_checks() -> None:
     ui.banner("Wayport doctor")
     ui.blank()
     for check in checks:
-        mark = "✓" if check.ok else "!"
         (ui.success if check.ok else ui.warn)(f"{check.name.ljust(20)} {check.detail}")
         if check.hint and not check.ok:
             ui.hint([f"    {check.hint}"])
-        del mark
     ui.blank()
 
     failures = [c for c in checks if not c.ok]

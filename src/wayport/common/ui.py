@@ -11,6 +11,7 @@ banners from shredding the status display.
 
 from __future__ import annotations
 
+import contextlib
 import os
 import sys
 from typing import TYPE_CHECKING, TextIO
@@ -56,7 +57,27 @@ class UI:
         self.stream = stream if stream is not None else sys.stdout
         self.quiet = quiet
         self._status_text = ""
+        self._prefer_utf8()
+        self.tick = "\u2713" if self._can_encode("\u2713") else "+"
         self.color_enabled = self._detect_color() if color is None else color
+
+    def _prefer_utf8(self) -> None:
+        """Ask the stream for UTF-8 where that is possible.
+
+        A Windows console often defaults to cp1252, which cannot represent the
+        tick and raises UnicodeEncodeError mid-write.
+        """
+        with contextlib.suppress(Exception):
+            self.stream.reconfigure(encoding="utf-8")  # type: ignore[union-attr]
+
+    def _can_encode(self, text: str) -> bool:
+        """True if this stream can represent the given text."""
+        encoding = getattr(self.stream, "encoding", None) or "ascii"
+        try:
+            text.encode(encoding)
+        except (UnicodeEncodeError, LookupError):
+            return False
+        return True
 
     def _detect_color(self) -> bool:
         if os.environ.get("FORCE_COLOR"):
@@ -103,7 +124,7 @@ class UI:
         self._write(f"  {message}")
 
     def success(self, message: str) -> None:
-        self._write(f"  {self._c('✓', GREEN)} {message}")
+        self._write(f"  {self._c(self.tick, GREEN)} {message}")
 
     def warn(self, message: str) -> None:
         self._write(f"  {self._c('!', YELLOW)} {message}")
