@@ -284,7 +284,15 @@ class LocalProxyConnection:
         except Exception as e:
             logger.debug("Read error", stream_id=self.stream_id, error=str(e))
         finally:
-            # Send close frame
+            # Release this side of the socket. Without it the descriptor sits in
+            # CLOSE_WAIT for the life of the process once the peer goes away,
+            # and a long session leaks descriptors until the tunnel fails.
+            self._connected = False
+            if self._write_task:
+                self._write_task.cancel()
+            with contextlib.suppress(Exception):
+                self.writer.close()
+
             close_frame = Frame(
                 frame_type=FrameType.CLOSE,
                 stream_id=self.stream_id,
