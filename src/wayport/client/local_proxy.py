@@ -59,6 +59,10 @@ class LocalProxyConnection:
 
         self._handshake_complete = False
         self._connected = False
+        # Bounded so a client that stops reading cannot grow memory without
+        # limit; overflow closes that stream only.
+        self._write_queue: asyncio.Queue[bytes] = asyncio.Queue(maxsize=512)
+        self._write_task: asyncio.Task[None] | None = None
         self._read_task: asyncio.Task[None] | None = None
         self._dest_addr: str = ""
         self._dest_port: int = 0
@@ -99,26 +103,44 @@ class LocalProxyConnection:
             self._connected = True
             # Send success response to client
             await self._send_connect_response(reply)
-            # Start reading from client
+            # Start pumping data in both directions for this stream.
             self._read_task = asyncio.create_task(self._read_loop())
+            self._write_task = asyncio.create_task(self._write_loop())
         else:
             # Send failure response and close
             await self._send_connect_response(reply)
             await self.close()
 
     async def handle_data(self, data: bytes) -> None:
-        """Handle data received from the exit node.
+        """Queue data received from the exit node for the local client.
 
-        Args:
-            data: Data to send to the local client
+        Deliberately does not await the write. Draining a socket whose reader
+        has stopped consuming can block indefinitely, and this is called from
+        the single loop that serves every stream -- awaiting here lets one
+        stalled application stall the whole tunnel.
         """
-        if self._connected:
+        if not self._connected:
+            return
+        try:
+            self._write_queue.put_nowait(data)
+        except asyncio.QueueFull:
+            # This one client is not keeping up; drop it rather than the tunnel.
+            logger.debug("Write queue full, closing stream", stream_id=self.stream_id)
+            await self.close()
+
+    async def _write_loop(self) -> None:
+        """Write queued data to the local client, one stream at a time."""
+        while True:
             try:
+                data = await self._write_queue.get()
                 self.writer.write(data)
                 await self.writer.drain()
+            except asyncio.CancelledError:
+                break
             except Exception as e:
                 logger.debug("Write error", stream_id=self.stream_id, error=str(e))
                 await self.close()
+                break
 
     async def close(self) -> None:
         """Close the connection."""
@@ -126,6 +148,11 @@ class LocalProxyConnection:
             self._read_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await self._read_task
+
+        if self._write_task:
+            self._write_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await self._write_task
         self.writer.close()
         with contextlib.suppress(Exception):
             await self.writer.wait_closed()
