@@ -23,6 +23,14 @@ if TYPE_CHECKING:
 
 logger = get_logger(__name__)
 
+# How much data to hold for a stream whose connection is still being made,
+# before dropping the rest rather than growing without bound.
+MAX_PENDING_BYTES = 1 << 20  # 1 MiB
+
+# Establishing the outbound connection. Kept well under a browser's own patience
+# so a dead destination fails visibly rather than hanging the request.
+CONNECT_TIMEOUT_SECONDS = 15.0
+
 
 class StreamConnection:
     """Represents an active stream connection to a destination."""
@@ -122,6 +130,12 @@ class SocksHandler:
         self.on_send_frame = on_send_frame
         self._streams: dict[int, StreamConnection] = {}
         self._lock = asyncio.Lock()
+        # Streams whose outbound connection is still being established, with any
+        # DATA that arrived meanwhile. Opens run concurrently (see handle_frame),
+        # so data can overtake the open it belongs to.
+        self._opening: dict[int, list[bytes]] = {}
+        self._aborted: set[int] = set()
+        self._open_tasks: set[asyncio.Task[None]] = set()
 
     async def handle_frame(self, frame: Frame) -> None:
         """Handle an incoming frame from the client.
@@ -130,10 +144,27 @@ class SocksHandler:
             frame: The received frame
         """
         if frame.frame_type == FrameType.OPEN:
-            await self._handle_open(frame)
+            # Deliberately not awaited. Establishing the outbound connection can
+            # take seconds for a slow or blackholed destination, and this loop
+            # processes every stream's frames -- awaiting here let one bad
+            # destination stall the entire tunnel for its whole timeout.
+            self._opening.setdefault(frame.stream_id, [])
+            task = asyncio.create_task(self._handle_open(frame))
+            self._open_tasks.add(task)
+            task.add_done_callback(self._open_tasks.discard)
         elif frame.frame_type == FrameType.DATA:
+            # Data for a stream that is still connecting is held until it is.
+            buffered = self._opening.get(frame.stream_id)
+            if buffered is not None:
+                if sum(len(b) for b in buffered) < MAX_PENDING_BYTES:
+                    buffered.append(frame.payload)
+                return
             await self._handle_data(frame)
         elif frame.frame_type == FrameType.CLOSE:
+            if frame.stream_id in self._opening:
+                # Closed before it finished opening; let the open task unwind.
+                self._aborted.add(frame.stream_id)
+                return
             await self._handle_close(frame)
 
     async def close_all(self) -> None:
@@ -142,6 +173,25 @@ class SocksHandler:
             for stream in list(self._streams.values()):
                 await stream.stop()
             self._streams.clear()
+
+    async def _flush_pending(self, stream_id: int, stream: StreamConnection) -> None:
+        """Deliver data that arrived while the connection was being made."""
+        pending = self._opening.pop(stream_id, [])
+        aborted = stream_id in self._aborted
+        self._aborted.discard(stream_id)
+        for payload in pending:
+            await stream.write(payload)
+        if aborted:
+            # The client gave up while we were still connecting.
+            async with self._lock:
+                self._streams.pop(stream_id, None)
+            await stream.stop()
+            logger.debug("Stream closed while opening", stream_id=stream_id)
+
+    def _discard_pending(self, stream_id: int) -> None:
+        """Forget a stream that never finished opening."""
+        self._opening.pop(stream_id, None)
+        self._aborted.discard(stream_id)
 
     async def _handle_open(self, frame: Frame) -> None:
         """Handle a stream open request.
@@ -164,16 +214,17 @@ class SocksHandler:
             try:
                 reader, writer = await asyncio.wait_for(
                     asyncio.open_connection(request.dest_addr, request.dest_port),
-                    timeout=30.0,
+                    timeout=CONNECT_TIMEOUT_SECONDS,
                 )
             except TimeoutError:
                 logger.debug("Connection timeout", stream_id=stream_id)
+                self._discard_pending(stream_id)
                 await self._send_open_response(stream_id, Socks5Reply.HOST_UNREACHABLE)
                 return
             except OSError as e:
                 logger.debug("Connection failed", stream_id=stream_id, error=str(e))
-                reply = self._os_error_to_reply(e)
-                await self._send_open_response(stream_id, reply)
+                self._discard_pending(stream_id)
+                await self._send_open_response(stream_id, self._os_error_to_reply(e))
                 return
 
             # Create stream connection
@@ -194,8 +245,11 @@ class SocksHandler:
             await self._send_open_response(stream_id, Socks5Reply.SUCCEEDED)
             logger.debug("Stream opened", stream_id=stream_id)
 
+            await self._flush_pending(stream_id, stream)
+
         except Exception as e:
             logger.error("Error opening stream", stream_id=stream_id, error=str(e))
+            self._discard_pending(stream_id)
             await self._send_open_response(stream_id, Socks5Reply.GENERAL_FAILURE)
 
     async def _handle_data(self, frame: Frame) -> None:
