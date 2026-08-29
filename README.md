@@ -22,32 +22,64 @@ $ wayport share                          $ wayport connect blue-otter-42
 
 ## Install
 
-Python 3.11 or newer.
+Python 3.11 or newer. One command per machine, after cloning.
+
+**Windows** (PowerShell, in the cloned folder):
+
+```powershell
+git clone https://github.com/graphcs/Wayport.git
+cd Wayport
+powershell -ExecutionPolicy Bypass -File .\scripts\setup.ps1
+```
+
+**macOS / Linux:**
 
 ```bash
 git clone https://github.com/graphcs/Wayport.git
 cd Wayport
-python3 -m venv .venv && source .venv/bin/activate    # Windows: .venv\Scripts\activate
-pip install -e .
+./scripts/setup.sh
 ```
 
-## First run
+Either script creates the virtual environment, installs Wayport, asks for the
+relay token, saves the configuration, and runs `wayport doctor` to confirm it
+works. It prints this machine's connection code at the end.
 
-Once per machine:
+The `-ExecutionPolicy Bypass` on Windows is needed because unsigned scripts are
+blocked by default; it applies to that one invocation only.
 
+Both machines need the **same relay token**. Pass it non-interactively if you
+prefer:
+
+```powershell
+.\scripts\setup.ps1 -Token "<token>" -Secret "<shared-secret>"
+```
 ```bash
-wayport setup
+./scripts/setup.sh --token "<token>" --secret "<shared-secret>"
 ```
 
-This asks for the relay URL and token and saves them to `~/.config/wayport/config.toml`
-(`%LOCALAPPDATA%\Wayport` on Windows) with owner-only permissions. Both machines
-need the **same relay token**. After that, neither side needs command-line flags.
+Settings are saved to `~/.config/wayport/config.toml`, or
+`%LOCALAPPDATA%\Wayport\config.toml` on Windows, with owner-only permissions.
+After setup, neither side needs command-line flags.
 
-Check everything is in order:
+Re-check at any time with:
 
 ```bash
 wayport doctor
 ```
+
+### Running it afterwards
+
+The scripts install into `.venv`, so either activate it:
+
+```powershell
+.\.venv\Scripts\Activate.ps1     # Windows
+```
+```bash
+source .venv/bin/activate         # macOS / Linux
+```
+
+or call the executable directly — `.\.venv\Scripts\wayport.exe share` on
+Windows, `./.venv/bin/wayport share` elsewhere.
 
 ## What gets routed
 

@@ -42,3 +42,36 @@ jobs:
           cache: pip
       - run: pip install -e ".[dev]"
       - run: pytest -q --timeout=60
+
+  # The one-command bootstrap is the first thing a new machine runs, so it is
+  # verified on the platform it targets rather than by inspection.
+  setup-script:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Run setup.sh
+        if: runner.os != 'Windows'
+        run: ./scripts/setup.sh --token ci-smoke-token
+
+      - name: Run setup.ps1
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./scripts/setup.ps1 -Token ci-smoke-token
+
+      - name: Wayport is installed and runnable
+        if: runner.os != 'Windows'
+        run: ./.venv/bin/wayport setup --show
+
+      - name: Wayport is installed and runnable
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: .\.venv\Scripts\wayport.exe setup --show
