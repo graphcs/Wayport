@@ -14,6 +14,7 @@ from aiohttp import WSMsgType
 from wayport.common.defaults import WS_HEARTBEAT_SECONDS
 from wayport.common.errors import FatalTunnelError
 from wayport.common.logging import get_logger
+from wayport.common.netproxy import relay_proxy
 from wayport.common.protocol import (
     ConnectMessage,
     Frame,
@@ -139,32 +140,43 @@ class ClientTunnel:
         self._fatal = None
         self._session = aiohttp.ClientSession(trust_env=False)
 
-        while self._running:
-            try:
-                await self._connect_and_handle()
-            except asyncio.CancelledError:
-                break
-            except Exception as e:
-                logger.error("Connection error", error=str(e))
+        try:
+            while self._running:
+                try:
+                    await self._connect_and_handle()
+                except asyncio.CancelledError:
+                    break
+                except aiohttp.WSServerHandshakeError as e:
+                    if e.status in (401, 403):
+                        raise FatalTunnelError(
+                            "the relay rejected this machine's token",
+                            "Both machines must use the same relay token.\n"
+                            "  wayport setup --relay-token <token>\n"
+                            "See the one in use with: wayport setup --show",
+                            code="unauthorized",
+                        ) from e
+                    logger.error("Connection error", error=str(e))
+                except Exception as e:
+                    logger.error("Connection error", error=str(e))
 
-            if self._fatal:
-                break
+                if self._fatal:
+                    break
 
-            if self._running:
-                self._notify_status("disconnected")
-                # Add jitter to prevent thundering herd (±25% randomization)
-                jitter = self._reconnect_delay * random.uniform(-0.25, 0.25)
-                delay_with_jitter = max(1, self._reconnect_delay + jitter)
-                logger.info("Reconnecting", delay=delay_with_jitter)
-                await asyncio.sleep(delay_with_jitter)
-                self._reconnect_delay = min(
-                    self._reconnect_delay * self.settings.reconnect_backoff_multiplier,
-                    self.settings.reconnect_max_delay_seconds,
-                )
-
-        if self._session:
-            await self._session.close()
-
+                if self._running:
+                    self._notify_status("disconnected")
+                    # Add jitter to prevent thundering herd (±25% randomization)
+                    jitter = self._reconnect_delay * random.uniform(-0.25, 0.25)
+                    delay_with_jitter = max(1, self._reconnect_delay + jitter)
+                    logger.info("Reconnecting", delay=delay_with_jitter)
+                    await asyncio.sleep(delay_with_jitter)
+                    self._reconnect_delay = min(
+                        self._reconnect_delay * self.settings.reconnect_backoff_multiplier,
+                        self.settings.reconnect_max_delay_seconds,
+                    )
+        finally:
+            if self._session:
+                await self._session.close()
+                self._session = None
         if self._fatal:
             raise _fatal_error(*self._fatal)
 
@@ -201,6 +213,10 @@ class ClientTunnel:
             url,
             headers=self._auth_headers(),
             heartbeat=WS_HEARTBEAT_SECONDS,
+            proxy=relay_proxy(
+                self.settings.relay_url,
+                local_proxy=(self.settings.proxy_host, self.settings.proxy_port),
+            ),
         ) as ws:
             self._ws = ws
             self._reconnect_delay = self.settings.reconnect_delay_seconds

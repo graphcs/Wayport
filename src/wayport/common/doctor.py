@@ -23,6 +23,8 @@ async def run_checks() -> None:
         _configuration(),
         _this_machine_code(),
         await _relay_reachable(),
+        await _relay_accepts_our_token(),
+        _outbound_proxy(),
         _proxy_port(),
         _proxy_backend(),
         _browser(),
@@ -162,3 +164,83 @@ def _stale_proxy_state() -> Check:
             "Run `wayport restore` to put them back.",
         )
     return Check("proxy state", True, "clean")
+
+
+async def _relay_accepts_our_token() -> Check:
+    """Open a real authenticated WebSocket, not just the public health check.
+
+    /health needs no token, so reachability alone says nothing about whether
+    this machine can actually register. A wrong or rotated token shows up here
+    and nowhere else.
+    """
+    import aiohttp
+
+    from wayport.common.config import ExitNodeSettings
+    from wayport.common.netproxy import relay_proxy
+    from wayport.common.state import load_config
+
+    config = load_config()
+    settings = ExitNodeSettings(
+        **{k: v for k, v in config.items() if k in ExitNodeSettings.model_fields}
+    )
+    if not settings.relay_token:
+        return Check(
+            "relay token",
+            False,
+            "not set",
+            "Run `wayport setup` and enter the token used by the other machine.",
+        )
+
+    headers = {"Authorization": f"Bearer {settings.relay_token}"}
+    url = f"{settings.relay_url}/server/register"
+    try:
+        async with (
+            aiohttp.ClientSession(trust_env=False) as session,
+            session.ws_connect(
+                url,
+                headers=headers,
+                proxy=relay_proxy(settings.relay_url),
+                timeout=aiohttp.ClientWSTimeout(ws_close=10),
+            ) as ws,
+        ):
+            await ws.close()
+        return Check("relay token", True, "accepted")
+    except aiohttp.WSServerHandshakeError as exc:
+        if exc.status == 401:
+            return Check(
+                "relay token",
+                False,
+                "rejected (401)",
+                "This machine's token does not match the relay's.\n"
+                "    Set the same one on both: wayport setup --relay-token <token>",
+            )
+        return Check("relay token", False, f"HTTP {exc.status}")
+    except Exception as exc:
+        return Check(
+            "relay token",
+            False,
+            f"{type(exc).__name__}",
+            "Could not open a WebSocket to the relay. A proxy or firewall may\n"
+            "    allow HTTPS but block WebSocket upgrades.",
+        )
+
+
+def _outbound_proxy() -> Check:
+    """Report any proxy this machine will use to reach the relay."""
+    from wayport.common.config import ClientSettings
+    from wayport.common.netproxy import PROXY_VARS, relay_proxy
+    from wayport.common.state import load_config
+
+    config = load_config()
+    settings = ClientSettings(
+        **{k: v for k, v in config.items() if k in ClientSettings.model_fields}
+    )
+    configured = [v for v in PROXY_VARS if v in __import__("os").environ]
+    proxy = relay_proxy(settings.relay_url)
+    if proxy:
+        return Check("outbound proxy", True, f"{proxy} (from {', '.join(configured)})")
+    if configured:
+        return Check(
+            "outbound proxy", True, f"set but not used for the relay ({', '.join(configured)})"
+        )
+    return Check("outbound proxy", True, "none (direct)")
